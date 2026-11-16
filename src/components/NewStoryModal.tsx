@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
-import { BookOpen, Plus, Sparkles, Trash2, X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { BookOpen, Check, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
 import { UNIVERSE_TEMPLATES, UniverseTemplate } from '../data/presets';
 import { ModelConfig, StoryProject, StorySnapshot } from '../types/story';
 import { postJson } from '../utils/api';
 import { DictaquillButton } from './DictaquillButton';
 import { ModelConfigPanel } from './ModelConfigPanel';
+
+export type NewStoryModalMode = 'presets' | 'custom' | 'library';
 
 interface SeedRow {
   id: string;
@@ -15,21 +17,61 @@ interface SeedRow {
 
 interface NewStoryModalProps {
   isOpen: boolean;
+  initialMode?: NewStoryModalMode;
   onClose: () => void;
   onLoadProject: (project: StoryProject) => void;
+  stories: StoryProject[];
+  activeStoryId: string;
+  onSelectStory: (storyId: string) => void;
+  onDeleteStory: (storyId: string) => void;
   modelConfig: ModelConfig;
   onChangeModelConfig: (next: ModelConfig) => void;
 }
 
 export const NewStoryModal: React.FC<NewStoryModalProps> = ({
   isOpen,
+  initialMode = 'presets',
   onClose,
   onLoadProject,
+  stories,
+  activeStoryId,
+  onSelectStory,
+  onDeleteStory,
   modelConfig,
   onChangeModelConfig,
 }) => {
-  const [mode, setMode] = useState<'presets' | 'custom'>('presets');
+  const [mode, setMode] = useState<NewStoryModalMode>(initialMode);
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
+  const [libraryQuery, setLibraryQuery] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setMode(initialMode);
+      setConfirmDeleteId(null);
+      setLibraryQuery('');
+    }
+  }, [isOpen, initialMode]);
+
+  const activeStory = useMemo(
+    () => stories.find((s) => s.id === activeStoryId) ?? stories[0],
+    [stories, activeStoryId],
+  );
+
+  const sortedFilteredStories = useMemo(() => {
+    const q = libraryQuery.trim().toLowerCase();
+    return [...stories]
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .filter((s) => {
+        if (!q) return true;
+        return (
+          s.title.toLowerCase().includes(q) ||
+          s.universe.toLowerCase().includes(q) ||
+          s.setting.toLowerCase().includes(q) ||
+          s.premise.toLowerCase().includes(q)
+        );
+      });
+  }, [stories, libraryQuery]);
 
   // Custom Universe Builder state
   const [universe, setUniverse] = useState('Harry Potter (Wizarding World)');
@@ -150,8 +192,8 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
         </div>
 
         {/* Mode Segmented Bar */}
-        <div className="px-6 pt-4 pb-2 border-b border-neutral-100 flex items-center gap-2">
-          <div className="inline-flex items-center gap-1 p-1 bg-neutral-100 rounded-lg">
+        <div className="px-6 pt-4 pb-3 border-b border-neutral-100 flex flex-wrap items-center justify-between gap-3">
+          <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-neutral-100 rounded-lg">
             <button
               type="button"
               onClick={() => setMode('presets')}
@@ -174,12 +216,177 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
             >
               Custom Universe &amp; Canon Builder
             </button>
+            <button
+              type="button"
+              onClick={() => setMode('library')}
+              className={`px-3.5 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                mode === 'library'
+                  ? 'bg-white text-[#111827] shadow-sm'
+                  : 'text-[#6B7280] hover:text-[#111827]'
+              }`}
+            >
+              My Stories (<span className="font-mono tabular-nums">{stories.length}</span>)
+            </button>
           </div>
         </div>
 
         {/* Body */}
-        <div className="p-6 overflow-y-auto flex-1">
-          {mode === 'presets' ? (
+        <div className="p-6 overflow-y-auto flex-1 space-y-5">
+          {mode !== 'library' && activeStory && (
+            <div className="px-4 py-2.5 bg-[#F8FAFC] border border-neutral-200 rounded-lg flex flex-wrap items-center justify-between gap-2 text-xs text-[#4B5563]">
+              <span>
+                Your current story <strong className="text-[#111827] font-semibold">“{activeStory.title}”</strong> is automatically saved in{' '}
+                <strong className="text-[#111827] font-medium">My Stories</strong> and won&apos;t be lost when you start another.
+              </span>
+              <button
+                type="button"
+                onClick={() => setMode('library')}
+                className="font-medium text-[#1D4ED8] hover:underline whitespace-nowrap shrink-0"
+              >
+                View My Stories ({stories.length})
+              </button>
+            </div>
+          )}
+
+          {mode === 'library' ? (
+            <div className="space-y-4">
+              {stories.length > 3 && (
+                <div className="relative">
+                  <Search className="w-4 h-4 text-[#9CA3AF] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={libraryQuery}
+                    onChange={(e) => setLibraryQuery(e.target.value)}
+                    placeholder="Filter saved stories by title, universe, setting, or premise..."
+                    className="w-full pl-9 pr-3.5 py-2 text-sm border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+                  />
+                </div>
+              )}
+
+              {sortedFilteredStories.length === 0 ? (
+                <div className="py-10 text-center border border-neutral-200 rounded-xl bg-neutral-50/50">
+                  <p className="text-sm font-medium text-[#111827]">
+                    No saved stories match “{libraryQuery}”
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setLibraryQuery('')}
+                    className="mt-2 text-xs font-medium text-[#1D4ED8] hover:underline"
+                  >
+                    Clear search
+                  </button>
+                </div>
+              ) : (
+                <div className="divide-y divide-neutral-200 border border-neutral-200 rounded-xl bg-white">
+                  {sortedFilteredStories.map((story) => {
+                    const isActive = story.id === activeStoryId;
+                    const isConfirmingDelete = confirmDeleteId === story.id;
+                    const chapterCount = story.chapters?.length ?? 0;
+                    return (
+                      <div
+                        key={story.id}
+                        className={`p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                          isActive ? 'bg-[#F8FAFC]' : ''
+                        }`}
+                      >
+                        <div className="min-w-0 space-y-1">
+                          <p className="text-xs text-[#6B7280]">
+                            {isActive && (
+                              <>
+                                <span className="font-semibold text-[#1D4ED8]">
+                                  Currently Open
+                                </span>{' '}
+                                <span aria-hidden="true">·</span>{' '}
+                              </>
+                            )}
+                            {story.universe} <span aria-hidden="true">·</span>{' '}
+                            <span className="font-mono tabular-nums">
+                              {story.turns.length}{' '}
+                              {story.turns.length === 1 ? 'scene' : 'scenes'}
+                            </span>{' '}
+                            {chapterCount > 0 && (
+                              <>
+                                <span aria-hidden="true">·</span>{' '}
+                                <span className="font-mono tabular-nums">
+                                  {chapterCount}{' '}
+                                  {chapterCount === 1 ? 'chapter' : 'chapters'}
+                                </span>{' '}
+                              </>
+                            )}
+                            <span aria-hidden="true">·</span>{' '}
+                            <span className="font-mono tabular-nums">
+                              {story.characters.length} cast
+                            </span>{' '}
+                            <span aria-hidden="true">·</span> Updated{' '}
+                            {new Date(story.updatedAt).toLocaleString()}
+                          </p>
+                          <h3 className="font-editorial text-lg font-semibold text-[#111827] truncate">
+                            {story.title}
+                          </h3>
+                          <p className="text-xs text-[#4B5563] line-clamp-2 leading-relaxed">
+                            {story.setting} <span aria-hidden="true">·</span> {story.premise}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {isConfirmingDelete ? (
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onDeleteStory(story.id);
+                                  setConfirmDeleteId(null);
+                                }}
+                                className="px-3 py-1.5 text-xs font-medium text-white bg-[#DC2626] hover:bg-[#B91C1C] rounded-lg transition-colors whitespace-nowrap shrink-0"
+                              >
+                                Confirm Delete
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="px-2.5 py-1.5 text-xs font-medium text-[#4B5563] hover:text-[#111827] rounded-lg transition-colors whitespace-nowrap shrink-0"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onSelectStory(story.id);
+                                  onClose();
+                                }}
+                                className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                                  isActive
+                                    ? 'text-[#1D4ED8] bg-[#EFF6FF] border border-[#BFDBFE] hover:bg-[#DBEAFE]'
+                                    : 'text-white bg-[#1D4ED8] hover:bg-[#1E40AF]'
+                                }`}
+                              >
+                                {isActive && <Check className="w-3.5 h-3.5" />}
+                                {isActive ? 'Resume Story' : 'Open Story'}
+                              </button>
+                              {stories.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteId(story.id)}
+                                  aria-label={`Delete story ${story.title}`}
+                                  title="Delete story from library"
+                                  className="p-2 text-[#6B7280] hover:text-[#DC2626] hover:bg-neutral-100 rounded-lg transition-colors shrink-0"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : mode === 'presets' ? (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {UNIVERSE_TEMPLATES.map((tpl) => {
                 const imgBroken = failedImages[tpl.id];

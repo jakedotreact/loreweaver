@@ -3,7 +3,7 @@ import { ChaptersView } from './components/ChaptersView';
 import { CharactersView } from './components/CharactersView';
 import { CrossIndexView } from './components/CrossIndexView';
 import { HtmlExportModal } from './components/HtmlExportModal';
-import { NewStoryModal } from './components/NewStoryModal';
+import { NewStoryModal, NewStoryModalMode } from './components/NewStoryModal';
 import { SavePointsView } from './components/SavePointsView';
 import { RewriteCorrectionPayload } from './components/SceneCorrectionModal';
 import { StoryWorkspace } from './components/StoryWorkspace';
@@ -23,7 +23,9 @@ import {
   StoryTurn,
 } from './types/story';
 
-const STORAGE_KEY = 'folio-canon-active-project-v1';
+const LEGACY_STORAGE_KEY = 'folio-canon-active-project-v1';
+const LIBRARY_STORAGE_KEY = 'folio-canon-stories-v1';
+const ACTIVE_STORY_ID_KEY = 'folio-canon-active-story-id-v1';
 const MODEL_CONFIG_KEY = 'folio-canon-model-config-v1';
 
 function loadInitialModelConfig(): ModelConfig {
@@ -44,22 +46,80 @@ function loadInitialModelConfig(): ModelConfig {
   return { model: 'gemini-4-hydrogen', thinkingLevel: 'HIGH' };
 }
 
-function loadInitialProject(): StoryProject {
+function isValidProject(candidate: unknown): candidate is StoryProject {
+  if (!candidate || typeof candidate !== 'object') return false;
+  const p = candidate as Partial<StoryProject>;
+  return Boolean(
+    p.title &&
+      Array.isArray(p.turns) &&
+      p.turns.length > 0 &&
+      Array.isArray(p.characters) &&
+      Array.isArray(p.crossIndex),
+  );
+}
+
+function normalizeProject(raw: StoryProject, usedIds?: Set<string>): StoryProject {
+  let id =
+    typeof raw.id === 'string' && raw.id.trim()
+      ? raw.id.trim()
+      : `proj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  if (usedIds) {
+    while (usedIds.has(id)) {
+      id = `${id}-${Math.random().toString(36).slice(2, 6)}`;
+    }
+    usedIds.add(id);
+  }
+  return {
+    ...raw,
+    id,
+    chapters: raw.chapters ?? [],
+    savePoints: raw.savePoints ?? [],
+    updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : Date.now(),
+  };
+}
+
+function loadInitialLibrary(): { stories: StoryProject[]; activeId: string } {
+  const usedIds = new Set<string>();
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as StoryProject;
-      if (parsed && parsed.title && Array.isArray(parsed.turns) && parsed.turns.length > 0) {
-        return {
-          ...parsed,
-          chapters: parsed.chapters ?? [],
-        };
+    const rawLibrary = localStorage.getItem(LIBRARY_STORAGE_KEY);
+    if (rawLibrary) {
+      const parsedList = JSON.parse(rawLibrary) as unknown;
+      if (Array.isArray(parsedList)) {
+        const valid = parsedList
+          .filter(isValidProject)
+          .map((p) => normalizeProject(p, usedIds));
+        if (valid.length > 0) {
+          const savedActiveId = localStorage.getItem(ACTIVE_STORY_ID_KEY);
+          const matched = valid.find((s) => s.id === savedActiveId);
+          return {
+            stories: valid,
+            activeId: matched ? matched.id : valid[0].id,
+          };
+        }
+      }
+    }
+  } catch {
+    // Fall back to legacy single-story storage or starter preset
+  }
+
+  try {
+    const rawLegacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (rawLegacy) {
+      const parsed = JSON.parse(rawLegacy) as unknown;
+      if (isValidProject(parsed)) {
+        const migrated = normalizeProject(parsed, usedIds);
+        return { stories: [migrated], activeId: migrated.id };
       }
     }
   } catch {
     // Fallback to starter template
   }
-  return JSON.parse(JSON.stringify(UNIVERSE_TEMPLATES[0].starterProject)) as StoryProject;
+
+  const starter = normalizeProject(
+    JSON.parse(JSON.stringify(UNIVERSE_TEMPLATES[0].starterProject)) as StoryProject,
+    usedIds,
+  );
+  return { stories: [starter], activeId: starter.id };
 }
 
 function extractSnapshot(project: StoryProject): StorySnapshot {
@@ -78,10 +138,17 @@ function extractSnapshot(project: StoryProject): StorySnapshot {
 }
 
 export default function App() {
-  const [project, setProject] = useState<StoryProject>(loadInitialProject);
+  const [library, setLibrary] = useState<{ stories: StoryProject[]; activeId: string }>(
+    loadInitialLibrary,
+  );
+  const project =
+    library.stories.find((s) => s.id === library.activeId) ?? library.stories[0];
+
   const [modelConfig, setModelConfig] = useState<ModelConfig>(loadInitialModelConfig);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('story');
   const [isNewStoryOpen, setIsNewStoryOpen] = useState(false);
+  const [newStoryInitialMode, setNewStoryInitialMode] =
+    useState<NewStoryModalMode>('presets');
   const speech = useNarrativeSpeech();
 
   const [htmlExportOpen, setHtmlExportOpen] = useState(false);
@@ -103,11 +170,21 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
+      localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(library.stories));
+      localStorage.setItem(ACTIVE_STORY_ID_KEY, library.activeId);
     } catch {
-      // Ignore storage quota errors gracefully
+      // Ignore storage quota errors gracefully; ensure active story is still persisted
+      try {
+        const active =
+          library.stories.find((s) => s.id === library.activeId) ?? library.stories[0];
+        if (active) {
+          localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(active));
+        }
+      } catch {
+        // Ignore fallback quota error
+      }
     }
-  }, [project]);
+  }, [library]);
 
   useEffect(() => {
     try {
@@ -116,6 +193,21 @@ export default function App() {
       // Ignore storage quota errors gracefully
     }
   }, [modelConfig]);
+
+  const updateProjectById = (
+    targetId: string,
+    updater: (prev: StoryProject) => StoryProject,
+  ) => {
+    setLibrary((prev) => ({
+      ...prev,
+      stories: prev.stories.map((s) => (s.id === targetId ? updater(s) : s)),
+    }));
+  };
+
+  const handleOpenNewStoryModal = (initialMode: NewStoryModalMode = 'presets') => {
+    setNewStoryInitialMode(initialMode);
+    setIsNewStoryOpen(true);
+  };
 
   const handleOpenHtmlExport = (chapterId?: string) => {
     setHtmlExportChapterId(chapterId);
@@ -134,7 +226,7 @@ export default function App() {
       snapshot: extractSnapshot(target),
     };
 
-    setProject((prev) => ({
+    updateProjectById(target.id, (prev) => ({
       ...prev,
       savePoints: [savePoint, ...prev.savePoints],
       updatedAt: Date.now(),
@@ -145,7 +237,7 @@ export default function App() {
     const target = project.savePoints.find((sp) => sp.id === saveId);
     if (!target) return;
     const restored: StorySnapshot = JSON.parse(JSON.stringify(target.snapshot));
-    setProject((prev) => ({
+    updateProjectById(project.id, (prev) => ({
       ...prev,
       ...restored,
       chapters: restored.chapters ?? [],
@@ -158,7 +250,7 @@ export default function App() {
   };
 
   const handleDeleteSavePoint = (saveId: string) => {
-    setProject((prev) => ({
+    updateProjectById(project.id, (prev) => ({
       ...prev,
       savePoints: prev.savePoints.filter((sp) => sp.id !== saveId),
       updatedAt: Date.now(),
@@ -166,6 +258,7 @@ export default function App() {
   };
 
   const handleAdvanceStory = async (userAction: string, selectedChoiceId: string | null) => {
+    const targetProjectId = project.id;
     setAdvanceError(null);
     setLastFailedAction(null);
     setPendingPrompt(userAction);
@@ -184,7 +277,7 @@ export default function App() {
         modelConfig,
       });
 
-      setProject((prev) => {
+      updateProjectById(targetProjectId, (prev) => {
         const updatedTurns = prev.turns.map((t, idx) =>
           idx === prev.turns.length - 1
             ? { ...t, selectedChoiceId }
@@ -256,7 +349,7 @@ export default function App() {
       (entry) => entry.introducedAtTurn <= turnNumber,
     );
 
-    setProject((prev) => ({
+    updateProjectById(project.id, (prev) => ({
       ...prev,
       turns: truncatedTurns,
       chapters: trimmedChapters,
@@ -270,7 +363,7 @@ export default function App() {
   };
 
   const handleUpdateChapters = (chapters: StoryChapter[]) => {
-    setProject((prev) => ({
+    updateProjectById(project.id, (prev) => ({
       ...prev,
       chapters,
       updatedAt: Date.now(),
@@ -281,7 +374,7 @@ export default function App() {
     updatedTurn: StoryTurn,
     newLoreCorrection?: Omit<CrossIndexEntry, 'id'>,
   ) => {
-    setProject((prev) => {
+    updateProjectById(project.id, (prev) => {
       const nextTurns = prev.turns.map((t) =>
         t.id === updatedTurn.id ? updatedTurn : t,
       );
@@ -301,6 +394,7 @@ export default function App() {
   const handleRewriteTurn = async (
     payload: RewriteCorrectionPayload,
   ): Promise<boolean> => {
+    const targetProjectId = project.id;
     setRewriteError(null);
     setIsRewritingScene(true);
     try {
@@ -318,7 +412,7 @@ export default function App() {
         modelConfig,
       });
 
-      setProject((prev) => ({
+      updateProjectById(targetProjectId, (prev) => ({
         ...prev,
         turns: prev.turns.map((t) =>
           t.id === data.rewrittenTurn.id ? data.rewrittenTurn : t,
@@ -342,7 +436,7 @@ export default function App() {
   };
 
   const handleUpsertCharacter = (character: CharacterProfile) => {
-    setProject((prev) => {
+    updateProjectById(project.id, (prev) => {
       const exists = prev.characters.some((c) => c.id === character.id);
       const nextCharacters = exists
         ? prev.characters.map((c) => (c.id === character.id ? character : c))
@@ -356,7 +450,7 @@ export default function App() {
   };
 
   const handleDeleteCharacter = (characterId: string) => {
-    setProject((prev) => ({
+    updateProjectById(project.id, (prev) => ({
       ...prev,
       characters: prev.characters.filter((c) => c.id !== characterId),
       updatedAt: Date.now(),
@@ -364,7 +458,7 @@ export default function App() {
   };
 
   const handleUpsertCrossIndex = (entry: CrossIndexEntry) => {
-    setProject((prev) => {
+    updateProjectById(project.id, (prev) => {
       const exists = prev.crossIndex.some((e) => e.id === entry.id);
       const nextEntries = exists
         ? prev.crossIndex.map((e) => (e.id === entry.id ? entry : e))
@@ -378,7 +472,7 @@ export default function App() {
   };
 
   const handleDeleteCrossIndex = (entryId: string) => {
-    setProject((prev) => ({
+    updateProjectById(project.id, (prev) => ({
       ...prev,
       crossIndex: prev.crossIndex.filter((e) => e.id !== entryId),
       updatedAt: Date.now(),
@@ -386,7 +480,7 @@ export default function App() {
   };
 
   const handleTogglePinCrossIndex = (entryId: string) => {
-    setProject((prev) => ({
+    updateProjectById(project.id, (prev) => ({
       ...prev,
       crossIndex: prev.crossIndex.map((e) =>
         e.id === entryId ? { ...e, pinned: !e.pinned } : e,
@@ -422,14 +516,62 @@ export default function App() {
 
   const handleLoadNewProject = (newProj: StoryProject) => {
     speech.stop();
-    setProject({
-      ...newProj,
-      chapters: newProj.chapters ?? [],
+    setLibrary((prev) => {
+      const usedIds = new Set(prev.stories.map((s) => s.id));
+      const normalized = normalizeProject(newProj, usedIds);
+      return {
+        stories: [normalized, ...prev.stories],
+        activeId: normalized.id,
+      };
     });
     setAuditReport(null);
     setAdvanceError(null);
     setLastFailedAction(null);
+    setRewriteError(null);
     setActiveTab('story');
+  };
+
+  const handleSelectStory = (storyId: string) => {
+    if (storyId === project.id) {
+      setActiveTab('story');
+      return;
+    }
+    speech.stop();
+    setLibrary((prev) => {
+      const exists = prev.stories.some((s) => s.id === storyId);
+      if (!exists) return prev;
+      return {
+        ...prev,
+        activeId: storyId,
+      };
+    });
+    setAuditReport(null);
+    setAdvanceError(null);
+    setLastFailedAction(null);
+    setRewriteError(null);
+    setActiveTab('story');
+  };
+
+  const handleDeleteStory = (storyId: string) => {
+    setLibrary((prev) => {
+      if (prev.stories.length <= 1) return prev;
+      const remaining = prev.stories.filter((s) => s.id !== storyId);
+      if (remaining.length === 0) return prev;
+      const deletingActive = prev.activeId === storyId;
+      if (deletingActive) {
+        speech.stop();
+      }
+      return {
+        stories: remaining,
+        activeId: deletingActive ? remaining[0].id : prev.activeId,
+      };
+    });
+    if (storyId === project.id) {
+      setAuditReport(null);
+      setAdvanceError(null);
+      setLastFailedAction(null);
+      setRewriteError(null);
+    }
   };
 
   return (
@@ -437,13 +579,15 @@ export default function App() {
       <TopNav
         activeTab={activeTab}
         onSelectTab={setActiveTab}
-        onOpenNewStory={() => setIsNewStoryOpen(true)}
+        onOpenNewStory={() => handleOpenNewStoryModal('presets')}
       />
 
       <div className="flex-1">
         {activeTab === 'story' && (
           <StoryWorkspace
             project={project}
+            storyCount={library.stories.length}
+            onOpenStoriesLibrary={() => handleOpenNewStoryModal('library')}
             isAdvancing={isAdvancing}
             pendingPrompt={pendingPrompt}
             advanceError={advanceError}
@@ -512,8 +656,13 @@ export default function App() {
 
       <NewStoryModal
         isOpen={isNewStoryOpen}
+        initialMode={newStoryInitialMode}
         onClose={() => setIsNewStoryOpen(false)}
         onLoadProject={handleLoadNewProject}
+        stories={library.stories}
+        activeStoryId={project.id}
+        onSelectStory={handleSelectStory}
+        onDeleteStory={handleDeleteStory}
         modelConfig={modelConfig}
         onChangeModelConfig={setModelConfig}
       />

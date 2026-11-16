@@ -30,6 +30,9 @@ Stitch individual narrative scenes ("blurbs") into numbered chapters, reorder sc
 
 ## Implemented Features
 
+- **Multi-Story Library & Switcher (`App`, `NewStoryModal`, `StoryWorkspace`)**:
+  - Automatically remembers every created, starter, or JSON-imported story in `localStorage` (`folio-canon-stories-v1` and `folio-canon-active-story-id-v1`, with seamless migration from single-story storage) so clicking **New Story** never overwrites prior worlds.
+  - Switch between remembered stories via the **My Stories** tab inside **New Story** or the **My Stories (N)** masthead button, complete with scene/chapter/cast counts, search filtering, and two-step delete confirmation.
 - **Canon-Aware Universe & Cast Builder (`NewStoryModal`)**:
   - Three curated starter worlds (with custom generated cover artwork) plus a Custom Universe Builder that deduces opening scenes, character traits/flaws, and initial Cross-Index invariants from any fictional canon or original setting.
 - **Branching Narrative & Freeform Steering (`StoryWorkspace`)**:
@@ -64,6 +67,7 @@ Stitch individual narrative scenes ("blurbs") into numbered chapters, reorder sc
 | **4. Narrative Audio (TTS)** | Integrated multi-chunk RIFF/WAV narration synthesis (`POST /api/story/tts` via `gemini-3.8-flash-lite-tts` on `v1beta`), player bar controls, voice selector, and WAV downloads on scenes and chapters. |
 | **5. Dictaquill Speech-to-Text (STT)** | Added live microphone recording and audio upload transcription (`POST /api/story/transcribe` via `gemini-3.5-transcribe` on `v1beta`) inside the story composer, New Story builder, and Scene Correction modal. |
 | **6. JSON Error Hardening & Prompt Retry** | Replaced brittle `res.json()` calls with `postJson`, added `/api/*` JSON error/404 Express middleware and `safeParseJson` fence/block extraction, and added retry recovery for failed story prompts, Dictaquill clips, and TTS audio. |
+| **7. Multi-Story Library & Switcher** | Upgraded `localStorage` persistence to store a full multi-story library (`folio-canon-stories-v1`), added the **My Stories** switcher tab in `NewStoryModal` and masthead shortcut in `StoryWorkspace`, and preserved prior stories across **New Story** creations and JSON imports. |
 
 ---
 
@@ -85,7 +89,7 @@ Stitch individual narrative scenes ("blurbs") into numbered chapters, reorder sc
 ├── server/
 │   └── storyAgent.ts          # Gemini prompts, JSON schemas, TTS WAV merging, STT
 ├── src/
-│   ├── App.tsx                # Workspace state, localStorage persistence, retry & story actions
+│   ├── App.tsx                # Workspace state, multi-story localStorage library, retry & story actions
 │   ├── types/story.ts         # Core TypeScript models (StoryProject, StoryTurn, CrossIndexEntry, etc.)
 │   ├── data/presets.ts        # Starter world templates and cover assets
 │   ├── hooks/

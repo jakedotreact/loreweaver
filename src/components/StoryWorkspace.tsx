@@ -8,6 +8,7 @@ import {
   Download,
   Flag,
   GitBranch,
+  Library,
   Loader2,
   Pause,
   RefreshCw,
@@ -29,6 +30,8 @@ import { TtsPlayerBar } from './TtsPlayerBar';
 
 interface StoryWorkspaceProps {
   project: StoryProject;
+  storyCount: number;
+  onOpenStoriesLibrary: () => void;
   isAdvancing: boolean;
   pendingPrompt: string | null;
   advanceError: string | null;
@@ -59,6 +62,8 @@ interface StoryWorkspaceProps {
 
 export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
   project,
+  storyCount,
+  onOpenStoriesLibrary,
   isAdvancing,
   pendingPrompt,
   advanceError,
@@ -155,6 +160,14 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          <button
+            type="button"
+            onClick={onOpenStoriesLibrary}
+            className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap"
+          >
+            <Library className="w-4 h-4 text-[#1D4ED8]" />
+            My Stories ({storyCount})
+          </button>
           <button
             type="button"
             onClick={() => {
