@@ -1,0 +1,6 @@
+{
+  "name": "Folio & Canon",
+  "description": "An agent-driven interactive storytelling studio with canon-aware character deduction, branching narrative choices, save points, and a universe continuity cross-index.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
