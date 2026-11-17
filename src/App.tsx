@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AccountSettingsModal } from './components/AccountSettingsModal';
 import { ChaptersView } from './components/ChaptersView';
 import { CharactersView } from './components/CharactersView';
 import { CrossIndexView } from './components/CrossIndexView';
@@ -8,6 +9,7 @@ import { SavePointsView } from './components/SavePointsView';
 import { RewriteCorrectionPayload } from './components/SceneCorrectionModal';
 import { StoryWorkspace } from './components/StoryWorkspace';
 import { TopNav, WorkspaceTab } from './components/TopNav';
+import { useAuth } from './contexts/AuthContext';
 import { UNIVERSE_TEMPLATES } from './data/presets';
 import { useNarrativeSpeech } from './hooks/useNarrativeSpeech';
 import { postJson } from './utils/api';
@@ -18,9 +20,11 @@ import {
   ModelConfig,
   SavePoint,
   StoryChapter,
+  StoryIllustration,
   StoryProject,
   StorySnapshot,
   StoryTurn,
+  TtsVoiceName,
 } from './types/story';
 
 const LEGACY_STORAGE_KEY = 'folio-canon-active-project-v1';
@@ -33,11 +37,11 @@ function loadInitialModelConfig(): ModelConfig {
     const raw = localStorage.getItem(MODEL_CONFIG_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as ModelConfig;
-      if (
-        parsed &&
-        (parsed.model === 'gemini-4-hydrogen' || parsed.model === 'gemini-3.1-flash-lite')
-      ) {
-        return parsed;
+      if (parsed && typeof parsed.model === 'string' && parsed.model.trim()) {
+        return {
+          model: parsed.model.trim(),
+          thinkingLevel: parsed.thinkingLevel || 'HIGH',
+        };
       }
     }
   } catch {
@@ -137,7 +141,53 @@ function extractSnapshot(project: StoryProject): StorySnapshot {
   };
 }
 
+function mergeLocalIllustrationsIntoCloud(
+  cloudStory: StoryProject,
+  localStory?: StoryProject,
+): StoryProject {
+  if (!localStory) return cloudStory;
+  const localTurnIllMap = new Map<string, StoryIllustration>();
+  for (const t of localStory.turns) {
+    if (t.illustration?.dataUrl) {
+      localTurnIllMap.set(t.id, t.illustration);
+    }
+  }
+  const localChapterIllMap = new Map<string, StoryIllustration>();
+  for (const ch of localStory.chapters ?? []) {
+    if (ch.illustration?.dataUrl) {
+      localChapterIllMap.set(ch.id, ch.illustration);
+    }
+  }
+  return {
+    ...cloudStory,
+    turns: cloudStory.turns.map((t) => {
+      if (t.illustration && !t.illustration.dataUrl) {
+        const localIll = localTurnIllMap.get(t.id);
+        if (localIll) return { ...t, illustration: localIll };
+      }
+      return t;
+    }),
+    chapters: (cloudStory.chapters ?? []).map((ch) => {
+      if (ch.illustration && !ch.illustration.dataUrl) {
+        const localIll = localChapterIllMap.get(ch.id);
+        if (localIll) return { ...ch, illustration: localIll };
+      }
+      return ch;
+    }),
+  };
+}
+
 export default function App() {
+  const {
+    user,
+    userSettings,
+    settingsLoaded,
+    updateUserSettings,
+    loadCloudStories,
+    syncStoryToCloud,
+    deleteStoryFromCloud,
+  } = useAuth();
+
   const [library, setLibrary] = useState<{ stories: StoryProject[]; activeId: string }>(
     loadInitialLibrary,
   );
@@ -149,7 +199,17 @@ export default function App() {
   const [isNewStoryOpen, setIsNewStoryOpen] = useState(false);
   const [newStoryInitialMode, setNewStoryInitialMode] =
     useState<NewStoryModalMode>('presets');
-  const speech = useNarrativeSpeech();
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+
+  const handleVoicePersist = useCallback(
+    (nextVoice: TtsVoiceName) => {
+      if (user) {
+        void updateUserSettings({ preferredVoice: nextVoice });
+      }
+    },
+    [user, updateUserSettings],
+  );
+  const speech = useNarrativeSpeech(handleVoicePersist);
 
   const [htmlExportOpen, setHtmlExportOpen] = useState(false);
   const [htmlExportChapterId, setHtmlExportChapterId] = useState<string | undefined>(undefined);
@@ -167,6 +227,108 @@ export default function App() {
 
   const [auditReport, setAuditReport] = useState<ContinuityAuditReport | null>(null);
   const [isAuditing, setIsAuditing] = useState(false);
+
+  const hydratedUidRef = useRef<string | null>(null);
+  const cloudSyncTimerRef = useRef<number | null>(null);
+
+  // Hydrate persistent preferences and stories when user signs in via OAuth
+  useEffect(() => {
+    if (!user) {
+      hydratedUidRef.current = null;
+      return;
+    }
+    if (!settingsLoaded || !userSettings) return;
+
+    const targetModel =
+      userSettings.allowedModels.length > 0 &&
+      !userSettings.allowedModels.includes(userSettings.preferredModel)
+        ? userSettings.allowedModels[0]
+        : userSettings.preferredModel;
+
+    setModelConfig({
+      model: targetModel,
+      thinkingLevel: userSettings.thinkingLevel,
+    });
+    speech.setPreferredVoice(userSettings.preferredVoice);
+
+    if (hydratedUidRef.current === user.uid) return;
+    hydratedUidRef.current = user.uid;
+
+    void (async () => {
+      try {
+        const cloudStories = await loadCloudStories();
+        if (cloudStories.length === 0) {
+          // Seed cloud with local library on first login
+          for (const localStory of library.stories) {
+            await syncStoryToCloud(localStory);
+          }
+          await updateUserSettings({ activeStoryId: library.activeId });
+          return;
+        }
+
+        setLibrary((prev) => {
+          const localMap = new Map(prev.stories.map((s) => [s.id, s]));
+          const mergedMap = new Map<string, StoryProject>();
+
+          for (const cs of cloudStories) {
+            const ls = localMap.get(cs.id);
+            if (!ls || cs.updatedAt >= ls.updatedAt) {
+              mergedMap.set(cs.id, mergeLocalIllustrationsIntoCloud(cs, ls));
+            } else {
+              mergedMap.set(ls.id, ls);
+            }
+          }
+          for (const ls of prev.stories) {
+            if (!mergedMap.has(ls.id)) {
+              mergedMap.set(ls.id, ls);
+            }
+          }
+
+          const mergedList = Array.from(mergedMap.values()).sort(
+            (a, b) => b.updatedAt - a.updatedAt,
+          );
+          const preferredActive = userSettings.activeStoryId;
+          const nextActiveId =
+            preferredActive && mergedMap.has(preferredActive)
+              ? preferredActive
+              : mergedMap.has(prev.activeId)
+                ? prev.activeId
+                : mergedList[0].id;
+
+          return { stories: mergedList, activeId: nextActiveId };
+        });
+      } catch {
+        // Handled by AuthContext syncError / handleFirestoreError
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, settingsLoaded, userSettings]);
+
+  const scheduleCloudStorySync = useCallback(
+    (story: StoryProject) => {
+      if (!user) return;
+      if (cloudSyncTimerRef.current) {
+        window.clearTimeout(cloudSyncTimerRef.current);
+      }
+      cloudSyncTimerRef.current = window.setTimeout(() => {
+        void syncStoryToCloud(story);
+      }, 800);
+    },
+    [user, syncStoryToCloud],
+  );
+
+  const handleChangeModelConfig = useCallback(
+    (next: ModelConfig) => {
+      setModelConfig(next);
+      if (user) {
+        void updateUserSettings({
+          preferredModel: next.model,
+          thinkingLevel: next.thinkingLevel,
+        });
+      }
+    },
+    [user, updateUserSettings],
+  );
 
   useEffect(() => {
     try {
@@ -198,10 +360,23 @@ export default function App() {
     targetId: string,
     updater: (prev: StoryProject) => StoryProject,
   ) => {
-    setLibrary((prev) => ({
-      ...prev,
-      stories: prev.stories.map((s) => (s.id === targetId ? updater(s) : s)),
-    }));
+    setLibrary((prev) => {
+      let updatedTarget: StoryProject | null = null;
+      const stories = prev.stories.map((s) => {
+        if (s.id === targetId) {
+          updatedTarget = updater(s);
+          return updatedTarget;
+        }
+        return s;
+      });
+      if (updatedTarget) {
+        scheduleCloudStorySync(updatedTarget);
+      }
+      return {
+        ...prev,
+        stories,
+      };
+    });
   };
 
   const handleOpenNewStoryModal = (initialMode: NewStoryModalMode = 'presets') => {
@@ -370,6 +545,32 @@ export default function App() {
     }));
   };
 
+  const handleSaveTurnIllustration = (
+    turnId: string,
+    illustration: StoryIllustration | null,
+  ) => {
+    updateProjectById(project.id, (prev) => ({
+      ...prev,
+      turns: prev.turns.map((t) =>
+        t.id === turnId ? { ...t, illustration } : t,
+      ),
+      updatedAt: Date.now(),
+    }));
+  };
+
+  const handleSaveChapterIllustration = (
+    chapterId: string,
+    illustration: StoryIllustration | null,
+  ) => {
+    updateProjectById(project.id, (prev) => ({
+      ...prev,
+      chapters: (prev.chapters ?? []).map((ch) =>
+        ch.id === chapterId ? { ...ch, illustration } : ch,
+      ),
+      updatedAt: Date.now(),
+    }));
+  };
+
   const handleCorrectTurn = (
     updatedTurn: StoryTurn,
     newLoreCorrection?: Omit<CrossIndexEntry, 'id'>,
@@ -516,14 +717,21 @@ export default function App() {
 
   const handleLoadNewProject = (newProj: StoryProject) => {
     speech.stop();
+    let createdNormalized: StoryProject | null = null;
     setLibrary((prev) => {
       const usedIds = new Set(prev.stories.map((s) => s.id));
       const normalized = normalizeProject(newProj, usedIds);
+      createdNormalized = normalized;
       return {
         stories: [normalized, ...prev.stories],
         activeId: normalized.id,
       };
     });
+    if (user && createdNormalized) {
+      const projToSync = createdNormalized as StoryProject;
+      void syncStoryToCloud(projToSync);
+      void updateUserSettings({ activeStoryId: projToSync.id });
+    }
     setAuditReport(null);
     setAdvanceError(null);
     setLastFailedAction(null);
@@ -545,6 +753,9 @@ export default function App() {
         activeId: storyId,
       };
     });
+    if (user) {
+      void updateUserSettings({ activeStoryId: storyId });
+    }
     setAuditReport(null);
     setAdvanceError(null);
     setLastFailedAction(null);
@@ -561,9 +772,16 @@ export default function App() {
       if (deletingActive) {
         speech.stop();
       }
+      const nextActiveId = deletingActive ? remaining[0].id : prev.activeId;
+      if (user) {
+        void deleteStoryFromCloud(storyId);
+        if (deletingActive) {
+          void updateUserSettings({ activeStoryId: nextActiveId });
+        }
+      }
       return {
         stories: remaining,
-        activeId: deletingActive ? remaining[0].id : prev.activeId,
+        activeId: nextActiveId,
       };
     });
     if (storyId === project.id) {
@@ -580,6 +798,7 @@ export default function App() {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         onOpenNewStory={() => handleOpenNewStoryModal('presets')}
+        onOpenAccountSettings={() => setIsAccountModalOpen(true)}
       />
 
       <div className="flex-1">
@@ -602,11 +821,12 @@ export default function App() {
             onRunAuditAndOpen={handleRunAuditAndOpen}
             onOpenHtmlExport={() => handleOpenHtmlExport()}
             onCorrectTurn={handleCorrectTurn}
+            onUpdateTurnIllustration={handleSaveTurnIllustration}
             isRewritingScene={isRewritingScene}
             rewriteError={rewriteError}
             onRewriteTurn={handleRewriteTurn}
             modelConfig={modelConfig}
-            onChangeModelConfig={setModelConfig}
+            onChangeModelConfig={handleChangeModelConfig}
             speech={speech}
           />
         )}
@@ -614,9 +834,13 @@ export default function App() {
         {activeTab === 'chapters' && (
           <ChaptersView
             project={project}
+            modelConfig={modelConfig}
             onUpdateChapters={handleUpdateChapters}
+            onUpdateChapterIllustration={handleSaveChapterIllustration}
+            onUpdateTurnIllustration={handleSaveTurnIllustration}
             onOpenHtmlExport={handleOpenHtmlExport}
             onOpenCrossIndex={() => setActiveTab('cross-index')}
+            onCorrectTurn={handleCorrectTurn}
             speech={speech}
           />
         )}
@@ -664,7 +888,7 @@ export default function App() {
         onSelectStory={handleSelectStory}
         onDeleteStory={handleDeleteStory}
         modelConfig={modelConfig}
-        onChangeModelConfig={setModelConfig}
+        onChangeModelConfig={handleChangeModelConfig}
       />
 
       <HtmlExportModal
@@ -672,6 +896,17 @@ export default function App() {
         onClose={() => setHtmlExportOpen(false)}
         project={project}
         initialChapterId={htmlExportChapterId}
+      />
+
+      <AccountSettingsModal
+        isOpen={isAccountModalOpen}
+        onClose={() => setIsAccountModalOpen(false)}
+        modelConfig={modelConfig}
+        onChangeModelConfig={handleChangeModelConfig}
+        preferredVoice={speech.voice}
+        onChangeVoice={(nextVoice) => {
+          void speech.changeVoice(nextVoice);
+        }}
       />
     </div>
   );

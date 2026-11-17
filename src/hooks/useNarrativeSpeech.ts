@@ -43,10 +43,13 @@ export interface NarrativeSpeechControls {
   stop: () => void;
   seek: (seconds: number) => void;
   changeVoice: (nextVoice: TtsVoiceName) => Promise<void>;
+  setPreferredVoice: (nextVoice: TtsVoiceName) => void;
   clearError: () => void;
 }
 
-export function useNarrativeSpeech(): NarrativeSpeechControls {
+export function useNarrativeSpeech(
+  onVoicePersist?: (voice: TtsVoiceName) => void,
+): NarrativeSpeechControls {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [activeAudioUrl, setActiveAudioUrl] = useState<string | null>(null);
@@ -233,12 +236,17 @@ export function useNarrativeSpeech(): NarrativeSpeechControls {
   const changeVoice = useCallback(
     async (nextVoice: TtsVoiceName) => {
       setVoice(nextVoice);
+      onVoicePersist?.(nextVoice);
       if (activeItemRef.current && activeKey) {
         await playWithVoice(activeItemRef.current, nextVoice);
       }
     },
-    [activeKey, playWithVoice],
+    [activeKey, onVoicePersist, playWithVoice],
   );
+
+  const setPreferredVoice = useCallback((nextVoice: TtsVoiceName) => {
+    setVoice(nextVoice);
+  }, []);
 
   const clearError = useCallback(() => {
     setError(null);
@@ -260,6 +268,7 @@ export function useNarrativeSpeech(): NarrativeSpeechControls {
     stop,
     seek,
     changeVoice,
+    setPreferredVoice,
     clearError,
   };
 }

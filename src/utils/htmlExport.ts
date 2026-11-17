@@ -62,6 +62,19 @@ function renderTurnHtml(turn: StoryTurn, options: HtmlExportOptions, isMergedFlo
     `);
   }
 
+  if (turn.illustration?.dataUrl) {
+    const captionText = escapeHtml(
+      turn.illustration.caption ||
+        `Scene ${String(turn.turnNumber).padStart(2, '0')}: ${turn.sceneTitle}`,
+    );
+    parts.push(`
+      <figure class="illustration-block">
+        <img src="${escapeHtml(turn.illustration.dataUrl)}" alt="${captionText}" />
+        <figcaption>${captionText}</figcaption>
+      </figure>
+    `);
+  }
+
   parts.push(`<div class="prose-block">`);
   for (const p of turn.prose) {
     parts.push(`<p>${escapeHtml(p)}</p>`);
@@ -132,6 +145,13 @@ export function generateStoryHtml(project: StoryProject, options: HtmlExportOpti
 
     if (chTurns.length === 0) continue;
 
+    const chapterIllustrationHtml = ch.illustration?.dataUrl
+      ? `<figure class="illustration-block">
+          <img src="${escapeHtml(ch.illustration.dataUrl)}" alt="${escapeHtml(ch.illustration.caption || ch.title)}" />
+          <figcaption>${escapeHtml(ch.illustration.caption || ch.title)}</figcaption>
+        </figure>`
+      : '';
+
     sectionsHtml.push(`
       <article class="chapter">
         <header class="chapter-header">
@@ -139,6 +159,7 @@ export function generateStoryHtml(project: StoryProject, options: HtmlExportOpti
           <h2>${escapeHtml(ch.title)}</h2>
           ${ch.summary ? `<p class="chapter-summary">${escapeHtml(ch.summary)}</p>` : ''}
         </header>
+        ${chapterIllustrationHtml}
         <div class="chapter-body">
           ${chTurns.map((t) => renderTurnHtml(t, options, true)).join('\n')}
         </div>
@@ -357,6 +378,27 @@ export function generateStoryHtml(project: StoryProject, options: HtmlExportOpti
       line-height: 1.8;
       margin: 0 0 16px;
       color: var(--ink);
+    }
+    .illustration-block {
+      margin: 18px 0 22px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: #f9fafb;
+    }
+    .illustration-block img {
+      display: block;
+      width: 100%;
+      max-height: 460px;
+      object-fit: cover;
+    }
+    .illustration-block figcaption {
+      padding: 10px 14px;
+      font-size: 13px;
+      color: var(--muted);
+      font-style: italic;
+      background: #ffffff;
+      border-top: 1px solid var(--border);
     }
     .choices-block, .notes-block {
       margin-top: 14px;

@@ -9,6 +9,8 @@ import {
   deduceSingleCharacter,
   deduceUniverseAndCast,
   formatGeminiError,
+  generateIllustrationPrompt,
+  listAvailableModels,
   rewriteSceneRetroactively,
   synthesizeNarrativeSpeech,
   transcribeDictation,
@@ -25,11 +27,19 @@ async function startServer() {
     res.json({ ok: true });
   });
 
-  app.get('/api/config', (_req, res) => {
+  app.get('/api/config', async (_req, res) => {
+    const discovered = await listAvailableModels();
     res.json({
       hasServerApiKey: Boolean(process.env.GEMINI_API_KEY),
-      availableModels: ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'],
+      availableModels: discovered.models.map((m) => m.id),
+      models: discovered.models,
+      source: discovered.source,
     });
+  });
+
+  app.get('/api/models', async (_req, res) => {
+    const discovered = await listAvailableModels();
+    res.json(discovered);
   });
 
   app.post('/api/story/deduce-universe', async (req, res) => {
@@ -203,6 +213,45 @@ async function startServer() {
     } catch (err) {
       return res.status(500).json({
         error: formatGeminiError(err, 'Failed to transcribe speech.'),
+      });
+    }
+  });
+
+  app.post('/api/story/illustration-prompt', async (req, res) => {
+    try {
+      const {
+        snapshot,
+        targetKind,
+        turnId,
+        chapterId,
+        stylePreference,
+        modelConfig,
+      } = req.body ?? {};
+      if (!snapshot || (targetKind !== 'scene' && targetKind !== 'chapter')) {
+        return res.status(400).json({
+          error: 'Story snapshot and target kind ("scene" or "chapter") are required.',
+        });
+      }
+      if (targetKind === 'scene' && !turnId) {
+        return res.status(400).json({ error: 'Target scene ID is required.' });
+      }
+      if (targetKind === 'chapter' && !chapterId) {
+        return res.status(400).json({ error: 'Target chapter ID is required.' });
+      }
+      const result = await generateIllustrationPrompt(
+        {
+          snapshot,
+          targetKind,
+          turnId,
+          chapterId,
+          stylePreference,
+        },
+        modelConfig,
+      );
+      return res.json({ result });
+    } catch (err) {
+      return res.status(500).json({
+        error: formatGeminiError(err, 'Failed to generate illustration prompt.'),
       });
     }
   });

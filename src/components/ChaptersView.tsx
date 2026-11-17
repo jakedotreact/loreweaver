@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Combine,
   Download,
+  ImagePlus,
   Loader2,
   Pause,
   Pencil,
@@ -17,24 +18,47 @@ import {
   X,
 } from 'lucide-react';
 import { NarrativeSpeechControls } from '../hooks/useNarrativeSpeech';
-import { StoryChapter, StoryProject, StoryTurn } from '../types/story';
+import {
+  ModelConfig,
+  StoryChapter,
+  StoryIllustration,
+  StoryProject,
+  StoryTurn,
+} from '../types/story';
 import { downloadChapterHtml } from '../utils/htmlExport';
+import { IllustrationFigure } from './IllustrationFigure';
+import { IllustrationModal, IllustrationTarget } from './IllustrationModal';
 import { ItemLoreModal, LoreTarget } from './ItemLoreModal';
+import { SceneInlineEditor } from './SceneInlineEditor';
 import { TtsPlayerBar } from './TtsPlayerBar';
 
 interface ChaptersViewProps {
   project: StoryProject;
+  modelConfig: ModelConfig;
   onUpdateChapters: (chapters: StoryChapter[]) => void;
+  onUpdateChapterIllustration: (
+    chapterId: string,
+    illustration: StoryIllustration | null,
+  ) => void;
+  onUpdateTurnIllustration?: (
+    turnId: string,
+    illustration: StoryIllustration | null,
+  ) => void;
   onOpenHtmlExport: (chapterId?: string) => void;
   onOpenCrossIndex?: () => void;
+  onCorrectTurn?: (updatedTurn: StoryTurn) => void;
   speech: NarrativeSpeechControls;
 }
 
 export const ChaptersView: React.FC<ChaptersViewProps> = ({
   project,
+  modelConfig,
   onUpdateChapters,
+  onUpdateChapterIllustration,
+  onUpdateTurnIllustration,
   onOpenHtmlExport,
   onOpenCrossIndex,
+  onCorrectTurn,
   speech,
 }) => {
   const chapters = useMemo(
@@ -72,8 +96,11 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
 
   // Chapter metadata editing modal
   const [editingChapter, setEditingChapter] = useState<StoryChapter | null>(null);
+  const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const [saveToast, setSaveToast] = useState<string | null>(null);
   const [loreTarget, setLoreTarget] = useState<LoreTarget | null>(null);
+  const [illustrationTarget, setIllustrationTarget] =
+    useState<IllustrationTarget | null>(null);
 
   const renumberChapters = (list: StoryChapter[]): StoryChapter[] =>
     list.map((ch, idx) => ({ ...ch, chapterNumber: idx + 1 }));
@@ -533,6 +560,26 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
                       </button>
                       <button
                         type="button"
+                        onClick={() =>
+                          setIllustrationTarget({
+                            kind: 'chapter',
+                            chapter,
+                            turns: chTurns,
+                          })
+                        }
+                        aria-label={`Illustration studio for chapter ${chapter.chapterNumber}`}
+                        title="Generate illustration prompt or upload chapter artwork"
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium border rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                          chapter.illustration
+                            ? 'text-[#1D4ED8] bg-[#EFF6FF] border-[#BFDBFE]'
+                            : 'text-[#4B5563] hover:text-[#1D4ED8] border-neutral-200 hover:bg-[#F8FAFC] hover:border-[#BFDBFE]'
+                        }`}
+                      >
+                        <ImagePlus className="w-3.5 h-3.5" />
+                        Illustrate
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => {
                           const filename = downloadChapterHtml(project, chapter);
                           setSaveToast(`Saved ${filename}`);
@@ -561,6 +608,27 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
                     speech={speech}
                     onReplay={() => speech.togglePlay(ttsItem)}
                   />
+
+                  {chapter.illustration && (
+                    <IllustrationFigure
+                      illustration={chapter.illustration}
+                      fallbackAlt={`Chapter ${String(chapter.chapterNumber).padStart(2, '0')} — ${chapter.title}`}
+                      onEdit={() =>
+                        setIllustrationTarget({
+                          kind: 'chapter',
+                          chapter,
+                          turns: chTurns,
+                        })
+                      }
+                      onRemove={() => {
+                        onUpdateChapterIllustration(chapter.id, null);
+                        setSaveToast(
+                          `Removed illustration from Chapter ${String(chapter.chapterNumber).padStart(2, '0')}`,
+                        );
+                        setTimeout(() => setSaveToast(null), 2600);
+                      }}
+                    />
+                  )}
 
                   {/* Mode Switcher */}
                   <div className="flex items-center justify-between gap-4">
@@ -604,6 +672,15 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
                               * * *
                             </p>
                           )}
+                          {turn.illustration && (
+                            <div className="py-1">
+                              <IllustrationFigure
+                                illustration={turn.illustration}
+                                fallbackAlt={`Scene ${String(turn.turnNumber).padStart(2, '0')} — ${turn.sceneTitle}`}
+                                compact
+                              />
+                            </div>
+                          )}
                           {turn.prose.map((p, pIdx) => (
                             <p key={pIdx}>{p}</p>
                           ))}
@@ -614,52 +691,123 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
                     <div className="divide-y divide-neutral-100">
                       {chTurns.map((turn, tIdx) => (
                         <div key={turn.id} className="py-4 first:pt-1 last:pb-0 space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-xs font-mono tabular-nums text-[#6B7280]">
-                              Scene {String(turn.turnNumber).padStart(2, '0')} · {turn.sceneTitle} ·{' '}
-                              {turn.location}
-                            </p>
-                            <div className="flex items-center gap-1 shrink-0">
-                              <button
-                                type="button"
-                                disabled={tIdx === 0}
-                                onClick={() =>
-                                  handleReorderTurnInChapter(chapter.id, turn.id, -1)
-                                }
-                                aria-label="Move blurb up"
-                                className="p-1 text-[#6B7280] hover:text-[#111827] disabled:opacity-30"
-                              >
-                                <ArrowUp className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                disabled={tIdx === chTurns.length - 1}
-                                onClick={() =>
-                                  handleReorderTurnInChapter(chapter.id, turn.id, 1)
-                                }
-                                aria-label="Move blurb down"
-                                className="p-1 text-[#6B7280] hover:text-[#111827] disabled:opacity-30"
-                              >
-                                <ArrowDown className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleRemoveTurnFromChapter(chapter.id, turn.id)
-                                }
-                                aria-label="Remove blurb from chapter"
-                                className="p-1 text-[#6B7280] hover:text-[#DC2626]"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                          <p className="text-xs text-[#1D4ED8]">
-                            Prompt: {turn.userAction || project.premise}
-                          </p>
-                          <p className="text-sm text-[#374151] leading-relaxed">
-                            {turn.prose.join(' ')}
-                          </p>
+                          {editingTurnId === turn.id && onCorrectTurn ? (
+                            <SceneInlineEditor
+                              turn={turn}
+                              openingPremise={project.premise}
+                              contextHint={`${project.universe}. Scene ${turn.turnNumber}: ${turn.sceneTitle}`}
+                              onSave={(updatedTurn) => {
+                                onCorrectTurn(updatedTurn);
+                                setEditingTurnId(null);
+                                setSaveToast(
+                                  `Saved edits to Scene ${String(updatedTurn.turnNumber).padStart(2, '0')}`,
+                                );
+                                setTimeout(() => setSaveToast(null), 2600);
+                              }}
+                              onCancel={() => setEditingTurnId(null)}
+                            />
+                          ) : (
+                            <>
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-xs font-mono tabular-nums text-[#6B7280]">
+                                  Scene {String(turn.turnNumber).padStart(2, '0')} · {turn.sceneTitle} ·{' '}
+                                  {turn.location}
+                                </p>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {onUpdateTurnIllustration && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setIllustrationTarget({ kind: 'scene', turn })
+                                      }
+                                      aria-label={`Illustrate scene ${turn.turnNumber}`}
+                                      title="Illustrate scene"
+                                      className={`p-1 ${
+                                        turn.illustration
+                                          ? 'text-[#1D4ED8]'
+                                          : 'text-[#6B7280] hover:text-[#1D4ED8]'
+                                      }`}
+                                    >
+                                      <ImagePlus className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  {onCorrectTurn && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingTurnId(turn.id)}
+                                      aria-label={`Edit scene ${turn.turnNumber} prompt or output`}
+                                      title="Edit scene prompt or output"
+                                      className="p-1 text-[#6B7280] hover:text-[#1D4ED8]"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    disabled={tIdx === 0}
+                                    onClick={() =>
+                                      handleReorderTurnInChapter(chapter.id, turn.id, -1)
+                                    }
+                                    aria-label="Move blurb up"
+                                    className="p-1 text-[#6B7280] hover:text-[#111827] disabled:opacity-30"
+                                  >
+                                    <ArrowUp className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={tIdx === chTurns.length - 1}
+                                    onClick={() =>
+                                      handleReorderTurnInChapter(chapter.id, turn.id, 1)
+                                    }
+                                    aria-label="Move blurb down"
+                                    className="p-1 text-[#6B7280] hover:text-[#111827] disabled:opacity-30"
+                                  >
+                                    <ArrowDown className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleRemoveTurnFromChapter(chapter.id, turn.id)
+                                    }
+                                    aria-label="Remove blurb from chapter"
+                                    className="p-1 text-[#6B7280] hover:text-[#DC2626]"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                              <p className="text-xs text-[#1D4ED8] whitespace-pre-wrap">
+                                Prompt: {turn.userAction || project.premise}
+                              </p>
+                              {turn.illustration && (
+                                <IllustrationFigure
+                                  illustration={turn.illustration}
+                                  fallbackAlt={`Scene ${String(turn.turnNumber).padStart(2, '0')} — ${turn.sceneTitle}`}
+                                  compact
+                                  onEdit={
+                                    onUpdateTurnIllustration
+                                      ? () =>
+                                          setIllustrationTarget({ kind: 'scene', turn })
+                                      : undefined
+                                  }
+                                  onRemove={
+                                    onUpdateTurnIllustration
+                                      ? () => {
+                                          onUpdateTurnIllustration(turn.id, null);
+                                          setSaveToast(
+                                            `Removed illustration from Scene ${String(turn.turnNumber).padStart(2, '0')}`,
+                                          );
+                                          setTimeout(() => setSaveToast(null), 2600);
+                                        }
+                                      : undefined
+                                  }
+                                />
+                              )}
+                              <p className="text-sm text-[#374151] leading-relaxed whitespace-pre-wrap">
+                                {turn.prose.join('\n\n')}
+                              </p>
+                            </>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -748,6 +896,38 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
         target={loreTarget}
         onClose={() => setLoreTarget(null)}
         onOpenCrossIndex={onOpenCrossIndex}
+      />
+
+      <IllustrationModal
+        project={project}
+        target={illustrationTarget}
+        modelConfig={modelConfig}
+        onClose={() => setIllustrationTarget(null)}
+        onSaveIllustration={(illustration) => {
+          if (!illustrationTarget) return;
+          if (illustrationTarget.kind === 'chapter') {
+            const ch = illustrationTarget.chapter;
+            onUpdateChapterIllustration(ch.id, illustration);
+            setSaveToast(
+              illustration
+                ? `Saved illustration for Chapter ${String(ch.chapterNumber).padStart(2, '0')}`
+                : `Removed illustration from Chapter ${String(ch.chapterNumber).padStart(2, '0')}`,
+            );
+            setTimeout(() => setSaveToast(null), 2600);
+          } else if (
+            illustrationTarget.kind === 'scene' &&
+            onUpdateTurnIllustration
+          ) {
+            const turn = illustrationTarget.turn;
+            onUpdateTurnIllustration(turn.id, illustration);
+            setSaveToast(
+              illustration
+                ? `Saved illustration for Scene ${String(turn.turnNumber).padStart(2, '0')}`
+                : `Removed illustration from Scene ${String(turn.turnNumber).padStart(2, '0')}`,
+            );
+            setTimeout(() => setSaveToast(null), 2600);
+          }
+        }}
       />
     </div>
   );

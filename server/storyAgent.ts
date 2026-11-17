@@ -4,7 +4,9 @@ import type {
   ContinuityAuditReport,
   CrossIndexCategory,
   CrossIndexEntry,
+  DiscoveredModelOption,
   ModelConfig,
+  ModelThinkingLevel,
   StoryChoice,
   StorySnapshot,
   StoryTurn,
@@ -14,13 +16,65 @@ import type {
 
 const DEFAULT_MODEL: SupportedModelId = 'gemini-4-hydrogen';
 
+const PAID_ONLY_MODELS = new Set([
+  'gemini-4-carbon',
+  'gemini-4-argon',
+  'gemini-3-pro-image',
+  'gemini-nano-banana-2.1',
+  'gemini-3.1-flash-lite-image',
+  'gemini-omni-1.2-flash',
+  'lyria-3-clip-preview',
+  'lyria-3-pro-preview',
+]);
+
+const DEPRECATED_MODEL_RE =
+  /^(?:models\/)?(?:gemini-1\.5|gemini-2\.0|gemini-pro(?:$|-)|embedding-|text-embedding-)/i;
+
+const NON_NARRATIVE_MODEL_RE =
+  /(?:-tts\b|transcribe|-live\b|-image\b|imagen|veo|omni|lyria|embedding|decision|robotics|computer-use|nano-banana|aqa|bisect|gemma)/i;
+
+export const FALLBACK_MODEL_OPTIONS: DiscoveredModelOption[] = [
+  {
+    id: 'gemini-4-hydrogen',
+    label: 'Gemini 4 Hydrogen',
+    description:
+      'Balanced prose quality and multi-step Cross-Index continuity reasoning.',
+    allowedThinkingLevels: ['LOW', 'MEDIUM', 'HIGH', 'XHIGH'],
+    defaultThinking: 'HIGH',
+    supportsThinkingLevel: true,
+  },
+  {
+    id: 'gemini-3.1-flash-lite',
+    label: 'Gemini 3.1 Flash Lite',
+    description:
+      'Ultra-fast, lightweight narrative drafting and rapid character deduction.',
+    allowedThinkingLevels: ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'],
+    defaultThinking: 'LOW',
+    supportsThinkingLevel: true,
+  },
+];
+
+function isValidNarrativeModelId(id: string): boolean {
+  const clean = id.replace(/^models\//, '').trim();
+  if (!clean || !/^[a-z0-9._-]+$/i.test(clean)) return false;
+  if (!clean.toLowerCase().startsWith('gemini-')) return false;
+  if (DEPRECATED_MODEL_RE.test(clean)) return false;
+  if (NON_NARRATIVE_MODEL_RE.test(clean)) return false;
+  if (PAID_ONLY_MODELS.has(clean.toLowerCase())) return false;
+  return true;
+}
+
 function resolveModelConfig(
   input?: Partial<ModelConfig>,
   fallbackThinking: ThinkingLevel = ThinkingLevel.MEDIUM,
-): { model: SupportedModelId; thinkingLevel: ThinkingLevel } {
+): { model: SupportedModelId; thinkingLevel?: ThinkingLevel } {
+  const requestedModel =
+    typeof input?.model === 'string'
+      ? input.model.replace(/^models\//, '').trim()
+      : '';
   const model: SupportedModelId =
-    input?.model === 'gemini-3.1-flash-lite'
-      ? 'gemini-3.1-flash-lite'
+    requestedModel && isValidNarrativeModelId(requestedModel)
+      ? requestedModel
       : DEFAULT_MODEL;
 
   const requested = input?.thinkingLevel;
@@ -43,8 +97,9 @@ function resolveModelConfig(
               : fallbackThinking,
         };
     }
-  } else {
-    // gemini-3.1-flash-lite
+  }
+
+  if (model === 'gemini-3.1-flash-lite') {
     switch (requested) {
       case 'MINIMAL':
         return { model, thinkingLevel: ThinkingLevel.MINIMAL };
@@ -59,6 +114,124 @@ function resolveModelConfig(
       default:
         return { model, thinkingLevel: fallbackThinking };
     }
+  }
+
+  // Gemini 3 and Gemini 4 models support ThinkingLevel; earlier series do not use thinkingLevel.
+  if (/^gemini-[34]/i.test(model)) {
+    switch (requested) {
+      case 'LOW':
+        return { model, thinkingLevel: ThinkingLevel.LOW };
+      case 'MEDIUM':
+        return { model, thinkingLevel: ThinkingLevel.MEDIUM };
+      case 'HIGH':
+      case 'XHIGH':
+        return { model, thinkingLevel: ThinkingLevel.HIGH };
+      default:
+        return {
+          model,
+          thinkingLevel:
+            fallbackThinking === ThinkingLevel.MINIMAL ||
+            fallbackThinking === ThinkingLevel.XHIGH
+              ? ThinkingLevel.MEDIUM
+              : fallbackThinking,
+        };
+    }
+  }
+
+  return { model, thinkingLevel: undefined };
+}
+
+export async function listAvailableModels(): Promise<{
+  source: 'api' | 'default';
+  models: DiscoveredModelOption[];
+  totalDiscovered?: number;
+  error?: string;
+}> {
+  if (!process.env.GEMINI_API_KEY) {
+    return {
+      source: 'default',
+      models: FALLBACK_MODEL_OPTIONS,
+    };
+  }
+
+  try {
+    const ai = getClient();
+    const pager = await ai.models.list({ config: { pageSize: 100 } });
+    const discovered: DiscoveredModelOption[] = [];
+    const seen = new Set<string>();
+    let totalDiscovered = 0;
+
+    const knownMap = new Map(FALLBACK_MODEL_OPTIONS.map((m) => [m.id, m]));
+
+    for await (const item of pager) {
+      totalDiscovered += 1;
+      const rawName = item.name ?? '';
+      const id = rawName.replace(/^models\//, '').trim();
+      if (!id || seen.has(id)) continue;
+
+      const actions = item.supportedActions ?? [];
+      if (actions.length > 0 && !actions.includes('generateContent')) {
+        continue;
+      }
+
+      if (!isValidNarrativeModelId(id)) {
+        continue;
+      }
+
+      seen.add(id);
+      const curated = knownMap.get(id);
+      if (curated) {
+        discovered.push({
+          ...curated,
+          inputTokenLimit: item.inputTokenLimit,
+          outputTokenLimit: item.outputTokenLimit,
+        });
+      } else {
+        const supportsThinkingLevel = /^gemini-[34]/i.test(id);
+        const allowedThinkingLevels: ModelThinkingLevel[] = supportsThinkingLevel
+          ? ['LOW', 'MEDIUM', 'HIGH']
+          : ['MEDIUM'];
+        discovered.push({
+          id,
+          label: item.displayName?.trim() || id,
+          description:
+            item.description?.trim() ||
+            'Discovered via server GEMINI_API_KEY.',
+          allowedThinkingLevels,
+          defaultThinking: 'MEDIUM',
+          supportsThinkingLevel,
+          inputTokenLimit: item.inputTokenLimit,
+          outputTokenLimit: item.outputTokenLimit,
+        });
+      }
+    }
+
+    if (discovered.length === 0) {
+      return {
+        source: 'api',
+        models: FALLBACK_MODEL_OPTIONS,
+        totalDiscovered,
+      };
+    }
+
+    discovered.sort((a, b) => {
+      const priority = (id: string) =>
+        id === 'gemini-4-hydrogen' ? 0 : id === 'gemini-3.1-flash-lite' ? 1 : 2;
+      const diff = priority(a.id) - priority(b.id);
+      return diff !== 0 ? diff : a.label.localeCompare(b.label);
+    });
+
+    return {
+      source: 'api',
+      models: discovered,
+      totalDiscovered,
+    };
+  } catch (err) {
+    return {
+      source: 'default',
+      models: FALLBACK_MODEL_OPTIONS,
+      error: formatGeminiError(err, 'Unable to query models from API key.'),
+    };
   }
 }
 
@@ -218,7 +391,7 @@ Tasks:
     config: {
       systemInstruction:
         'You are a master interactive novelist, canon archivist, and continuity director. Generate rich literary prose free of clichés, faithfully honor fictional canon psychology (both strengths and flaws), and maintain a rigorous Cross-Index.',
-      thinkingConfig: { thinkingLevel },
+      ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,
@@ -443,7 +616,7 @@ If "${input.name}" is a known canon character from "${input.universe}", faithful
     config: {
       systemInstruction:
         'You are a character psychologist and fictional canon archivist. Deduce complete, balanced character profiles with authentic flaws and strengths.',
-      thinkingConfig: { thinkingLevel },
+      ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,
@@ -622,7 +795,7 @@ INSTRUCTIONS:
     config: {
       systemInstruction:
         'You are an interactive narrative director and continuity guardian. Every scene must obey the Cross-Index, respect character flaws and inventories, and smoothly evolve the living story world.',
-      thinkingConfig: { thinkingLevel },
+      ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,
@@ -1008,7 +1181,7 @@ Return a crisp summary and concrete findings.
     config: {
       systemInstruction:
         'You are a meticulous continuity editor auditing a narrative manuscript against its Cross-Index and character sheets.',
-      thinkingConfig: { thinkingLevel },
+      ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,
@@ -1236,7 +1409,7 @@ INSTRUCTIONS:
     config: {
       systemInstruction:
         'You are a meticulous narrative editor and continuity director performing a retroactive scene rewrite. Seamlessly weave the author’s manual correction into literary prose while honoring all Cross-Index rules and character voices.',
-      thinkingConfig: { thinkingLevel },
+      ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,
@@ -1823,6 +1996,165 @@ export async function transcribeDictation(
 
   return { text };
 }
+
+export interface GenerateIllustrationPromptInput {
+  snapshot: StorySnapshot;
+  targetKind: 'scene' | 'chapter';
+  turnId?: string;
+  chapterId?: string;
+  stylePreference?: string;
+}
+
+export interface IllustrationPromptResult {
+  prompt: string;
+  caption: string;
+  artStyle: string;
+  continuityChecklist: string[];
+}
+
+export async function generateIllustrationPrompt(
+  input: GenerateIllustrationPromptInput,
+  modelConfig?: Partial<ModelConfig>,
+): Promise<IllustrationPromptResult> {
+  const ai = getClient();
+  const { model, thinkingLevel } = resolveModelConfig(modelConfig, ThinkingLevel.LOW);
+
+  let targetHeader = '';
+  let targetNarrative = '';
+  let activeCharNames: string[] = [];
+
+  if (input.targetKind === 'scene') {
+    const turn = input.snapshot.turns.find((t) => t.id === input.turnId);
+    if (!turn) {
+      throw new Error('Target scene could not be found in the story.');
+    }
+    targetHeader = `Scene ${turn.turnNumber}: ${turn.sceneTitle} | Location: ${turn.location} | Time: ${turn.inStoryTime}`;
+    targetNarrative = [
+      turn.userAction ? `Triggering Action: ${turn.userAction}` : '',
+      turn.prose.join('\n\n'),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    activeCharNames = turn.activeCharacters;
+  } else {
+    const chapter = (input.snapshot.chapters ?? []).find(
+      (c) => c.id === input.chapterId,
+    );
+    if (!chapter) {
+      throw new Error('Target chapter could not be found in the story.');
+    }
+    const turnMap = new Map(input.snapshot.turns.map((t) => [t.id, t]));
+    const chTurns = chapter.turnIds
+      .map((id) => turnMap.get(id))
+      .filter((t): t is StoryTurn => Boolean(t));
+
+    targetHeader = `Chapter ${chapter.chapterNumber}: ${chapter.title}${
+      chapter.summary ? ` | Summary: ${chapter.summary}` : ''
+    }`;
+    targetNarrative = chTurns
+      .map(
+        (t) =>
+          `[Scene ${t.turnNumber} — ${t.sceneTitle} (${t.location}, ${t.inStoryTime})]\n${t.prose.join('\n\n')}`,
+      )
+      .join('\n\n---\n\n');
+    activeCharNames = Array.from(
+      new Set(chTurns.flatMap((t) => t.activeCharacters)),
+    );
+  }
+
+  const activeSet = new Set(activeCharNames.map((n) => n.trim().toLowerCase()));
+  const relevantCharacters = input.snapshot.characters.filter((c) => {
+    const lower = c.name.toLowerCase();
+    for (const active of activeSet) {
+      if (active === lower || lower.includes(active) || active.includes(lower)) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  const relevantLore = input.snapshot.crossIndex
+    .filter((entry) => entry.status !== 'resolved')
+    .slice(0, 12)
+    .map((entry) => ({
+      category: entry.category,
+      title: entry.title,
+      detail: entry.detail,
+    }));
+
+  const prompt = `
+UNIVERSE: ${input.snapshot.universe}
+SETTING: ${input.snapshot.setting}
+TONE & GENRE: ${input.snapshot.tone}
+REQUESTED ART STYLE PREFERENCE: ${input.stylePreference?.trim() || 'Match the literary tone and era of the universe'}
+
+TARGET TO ILLUSTRATE (${input.targetKind.toUpperCase()}):
+${targetHeader}
+
+NARRATIVE TEXT:
+${targetNarrative}
+
+CHARACTERS PRESENT (honor exact physical traits, status, and inventory):
+${JSON.stringify(
+  relevantCharacters.map((c) => ({
+    name: c.name,
+    role: c.role,
+    summary: c.summary,
+    status: c.status,
+    location: c.location,
+    inventory: c.inventory,
+  })),
+  null,
+  2,
+)}
+
+ACTIVE CROSS-INDEX CANON CONSTRAINTS (MUST NOT BE CONTRADICTED VISUALLY):
+${JSON.stringify(relevantLore, null, 2)}
+
+INSTRUCTIONS:
+1. Craft a vivid, concrete "prompt" (1-2 rich paragraphs, ready to paste into any illustration generator or send to an artist) capturing the most evocative visual moment of this ${input.targetKind}: foreground/midground composition, lighting, weather/atmosphere, period architecture, character poses/expressions, clothing, and exact carried items. Avoid generic buzzwords like "masterpiece" or "8k".
+2. Write a concise 1-sentence literary "caption" suitable for a book figure caption beneath the plate.
+3. Specify "artStyle" summarizing the recommended medium, brushwork/line quality, and palette.
+4. Provide 2-4 crisp "continuityChecklist" items naming concrete visual canon facts from the Cross-Index or character inventories that the artwork must get right.
+`;
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: prompt,
+    config: {
+      systemInstruction:
+        'You are an editorial art director and fictional canon archivist creating faithful, visually specific book illustration briefs that strictly obey story continuity.',
+      ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          prompt: { type: Type.STRING },
+          caption: { type: Type.STRING },
+          artStyle: { type: Type.STRING },
+          continuityChecklist: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+          },
+        },
+        required: ['prompt', 'caption', 'artStyle', 'continuityChecklist'],
+      },
+    },
+  });
+
+  const parsed = safeParseJson<IllustrationPromptResult>(
+    response.text,
+    'Failed to generate canon illustration brief.',
+  );
+
+  return {
+    prompt: parsed.prompt.trim(),
+    caption: parsed.caption.trim(),
+    artStyle: parsed.artStyle.trim(),
+    continuityChecklist: (parsed.continuityChecklist ?? []).filter(Boolean),
+  };
+}
+
 
 
 

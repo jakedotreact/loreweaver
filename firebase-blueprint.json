@@ -1,0 +1,198 @@
+{
+  "entities": {
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "Private user account profile, persistent studio preferences, and per-user model associations.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the account owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name from OAuth profile.",
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified email address from OAuth profile.",
+          "maxLength": 254
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Optional avatar URL from OAuth profile.",
+          "maxLength": 500
+        },
+        "preferredModel": {
+          "type": "string",
+          "description": "User's default Gemini narrative model ID.",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "thinkingLevel": {
+          "type": "string",
+          "description": "User's default reasoning depth.",
+          "enum": ["MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"]
+        },
+        "preferredVoice": {
+          "type": "string",
+          "description": "User's default Text-to-Speech narrator voice.",
+          "enum": ["Kore", "Charon", "Fenrir", "Puck", "Zephyr"]
+        },
+        "allowedModels": {
+          "type": "array",
+          "description": "Bounded list of Gemini model IDs associated with this user account (empty means all non-paid models)."
+        },
+        "activeStoryId": {
+          "type": "string",
+          "description": "ID of the user's most recently active story.",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when settings document was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when settings document was last updated."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "email",
+        "preferredModel",
+        "thinkingLevel",
+        "preferredVoice",
+        "allowedModels",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserStory": {
+      "title": "UserStory",
+      "description": "Persistent interactive story project belonging to a specific authenticated user (excludes binary image payloads).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique story identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the story owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Story title.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "universe": {
+          "type": "string",
+          "description": "Fictional universe or canon.",
+          "maxLength": 200
+        },
+        "setting": {
+          "type": "string",
+          "description": "Setting and era.",
+          "maxLength": 400
+        },
+        "tone": {
+          "type": "string",
+          "description": "Narrative tone and genre.",
+          "maxLength": 200
+        },
+        "premise": {
+          "type": "string",
+          "description": "Opening premise prompt.",
+          "maxLength": 4000
+        },
+        "protagonistId": {
+          "type": "string",
+          "description": "Character ID of the protagonist.",
+          "maxLength": 128
+        },
+        "turns": {
+          "type": "array",
+          "description": "Chronological narrative turns."
+        },
+        "characters": {
+          "type": "array",
+          "description": "Cast profiles."
+        },
+        "crossIndex": {
+          "type": "array",
+          "description": "Cross-Index continuity ledger."
+        },
+        "chapters": {
+          "type": "array",
+          "description": "Merged chapter groupings."
+        },
+        "savePoints": {
+          "type": "array",
+          "description": "Manual or automatic checkpoints."
+        },
+        "clientUpdatedAt": {
+          "type": "number",
+          "description": "Client millisecond timestamp for merge ordering."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when story was first synced."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when story was last synced."
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "title",
+        "universe",
+        "setting",
+        "tone",
+        "premise",
+        "protagonistId",
+        "turns",
+        "characters",
+        "crossIndex",
+        "chapters",
+        "savePoints",
+        "clientUpdatedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserSettings"
+      },
+      "description": "Per-user private OAuth profile, persistent studio preferences, and model associations."
+    },
+    "/users/{userId}/stories/{storyId}": {
+      "schema": {
+        "$ref": "#/entities/UserStory"
+      },
+      "description": "User-owned interactive story manuscripts synced across devices without oversized binary image payloads."
+    }
+  }
+}

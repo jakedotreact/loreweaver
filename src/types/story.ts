@@ -53,6 +53,16 @@ export interface StoryChoice {
   consequenceHint: string;
 }
 
+export interface StoryIllustration {
+  id: string;
+  dataUrl: string;
+  caption: string;
+  promptUsed?: string;
+  artStyle?: string;
+  source: 'uploaded' | 'generated';
+  createdAt: number;
+}
+
 export interface StoryTurn {
   id: string;
   turnNumber: number;
@@ -66,6 +76,7 @@ export interface StoryTurn {
   activeCharacters: string[];
   continuityNotes: string[];
   continuityWarning: string | null;
+  illustration?: StoryIllustration | null;
   timestamp: number;
 }
 
@@ -75,6 +86,7 @@ export interface StoryChapter {
   title: string;
   summary: string;
   turnIds: string[];
+  illustration?: StoryIllustration | null;
   mergedAt: number;
 }
 
@@ -121,13 +133,24 @@ export interface ContinuityAuditReport {
   findings: ContinuityAuditFinding[];
 }
 
-export type SupportedModelId = 'gemini-4-hydrogen' | 'gemini-3.1-flash-lite';
+export type SupportedModelId = string;
 
 export type ModelThinkingLevel = 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH';
 
 export interface ModelConfig {
   model: SupportedModelId;
   thinkingLevel: ModelThinkingLevel;
+}
+
+export interface DiscoveredModelOption {
+  id: string;
+  label: string;
+  description: string;
+  allowedThinkingLevels: ModelThinkingLevel[];
+  defaultThinking: ModelThinkingLevel;
+  supportsThinkingLevel: boolean;
+  inputTokenLimit?: number;
+  outputTokenLimit?: number;
 }
 
 export type TtsVoiceName = 'Kore' | 'Charon' | 'Fenrir' | 'Puck' | 'Zephyr';
