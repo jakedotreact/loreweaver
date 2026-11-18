@@ -1,7 +1,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BookOpen, Check, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
+import {
+  BookOpen,
+  Check,
+  Lock,
+  Plus,
+  Search,
+  Share2,
+  Sparkles,
+  Tag,
+  Trash2,
+  Users,
+  X,
+} from 'lucide-react';
 import { UNIVERSE_TEMPLATES, UniverseTemplate } from '../data/presets';
 import { ModelConfig, StoryProject, StorySnapshot } from '../types/story';
+import { createDefaultTagsForProject } from '../utils/ao3Tags';
 import { postJson } from '../utils/api';
 import { DictaquillButton } from './DictaquillButton';
 import { ModelConfigPanel } from './ModelConfigPanel';
@@ -24,6 +37,9 @@ interface NewStoryModalProps {
   activeStoryId: string;
   onSelectStory: (storyId: string) => void;
   onDeleteStory: (storyId: string) => void;
+  onShareStory?: (story: StoryProject) => void;
+  onCollaborateStory?: (story: StoryProject) => void;
+  onEditStoryTags?: (story: StoryProject) => void;
   modelConfig: ModelConfig;
   onChangeModelConfig: (next: ModelConfig) => void;
 }
@@ -37,6 +53,9 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
   activeStoryId,
   onSelectStory,
   onDeleteStory,
+  onShareStory,
+  onCollaborateStory,
+  onEditStoryTags,
   modelConfig,
   onChangeModelConfig,
 }) => {
@@ -44,6 +63,7 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
   const [libraryQuery, setLibraryQuery] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [createPrivate, setCreatePrivate] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -148,6 +168,8 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
       const newProject: StoryProject = {
         ...data.snapshot,
         id: `proj-${Date.now()}`,
+        isPrivate: createPrivate,
+        tags: createDefaultTagsForProject(data.snapshot),
         savePoints: [],
         updatedAt: Date.now(),
       };
@@ -326,9 +348,22 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
                           <p className="text-xs text-[#4B5563] line-clamp-2 leading-relaxed">
                             {story.setting} <span aria-hidden="true">·</span> {story.premise}
                           </p>
+                          {(story.shareId || story.collabId || story.isPrivate) && (
+                            <p className="text-[11px] font-mono text-[#1D4ED8] pt-0.5 flex flex-wrap items-center gap-2">
+                              {story.isPrivate && (
+                                <span className="inline-flex items-center gap-1 text-[#92400E]">
+                                  <Lock className="w-3 h-3" />
+                                  Private (excluded from Story Index)
+                                </span>
+                              )}
+                              {story.shareId ? 'Share link active' : ''}
+                              {story.shareId && story.collabId ? ' · ' : ''}
+                              {story.collabId ? 'Collaboration link active' : ''}
+                            </p>
+                          )}
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
                           {isConfirmingDelete ? (
                             <div className="flex items-center gap-1.5">
                               <button
@@ -351,6 +386,46 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
                             </div>
                           ) : (
                             <>
+                              {onEditStoryTags && (
+                                <button
+                                  type="button"
+                                  onClick={() => onEditStoryTags(story)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                                >
+                                  <Tag className="w-3.5 h-3.5 text-[#1D4ED8]" />
+                                  Tags &amp; Privacy
+                                </button>
+                              )}
+                              {onShareStory && (
+                                <button
+                                  type="button"
+                                  onClick={() => onShareStory(story)}
+                                  aria-label={`Share link for ${story.title}`}
+                                  className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium border rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                                    story.shareId
+                                      ? 'text-[#1D4ED8] bg-[#EFF6FF] border-[#BFDBFE] hover:bg-[#DBEAFE]'
+                                      : 'text-[#111827] bg-white border-neutral-300 hover:bg-neutral-50'
+                                  }`}
+                                >
+                                  <Share2 className="w-3.5 h-3.5 text-[#1D4ED8]" />
+                                  Share Link
+                                </button>
+                              )}
+                              {onCollaborateStory && (
+                                <button
+                                  type="button"
+                                  onClick={() => onCollaborateStory(story)}
+                                  aria-label={`Collaboration link for ${story.title}`}
+                                  className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium border rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                                    story.collabId
+                                      ? 'text-[#1D4ED8] bg-[#EFF6FF] border-[#BFDBFE] hover:bg-[#DBEAFE]'
+                                      : 'text-[#111827] bg-white border-neutral-300 hover:bg-neutral-50'
+                                  }`}
+                                >
+                                  <Users className="w-3.5 h-3.5 text-[#1D4ED8]" />
+                                  Collab Link
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => {
@@ -594,17 +669,34 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-neutral-200">
-                <h3 className="text-sm font-semibold text-[#111827] mb-3">
-                  Model Configuration
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="sm:col-span-2">
-                    <ModelConfigPanel
-                      config={modelConfig}
-                      onChange={onChangeModelConfig}
-                      compact
-                    />
+              <div className="pt-4 border-t border-neutral-200 space-y-4">
+                <label className="flex items-start gap-2.5 p-3 border border-neutral-200 rounded-lg bg-[#F8FAFC] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={createPrivate}
+                    onChange={(e) => setCreatePrivate(e.target.checked)}
+                    className="mt-0.5 accent-[#1D4ED8]"
+                  />
+                  <span className="text-xs text-[#374151]">
+                    <span className="font-semibold text-[#111827] block">
+                      Keep this story Private
+                    </span>
+                    Private manuscripts are strictly excluded from the public Landing Page Story Index. You can change visibility or add AO3 tags anytime.
+                  </span>
+                </label>
+
+                <div>
+                  <h3 className="text-sm font-semibold text-[#111827] mb-3">
+                    Model Configuration
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2">
+                      <ModelConfigPanel
+                        config={modelConfig}
+                        onChange={onChangeModelConfig}
+                        compact
+                      />
+                    </div>
                   </div>
                 </div>
               </div>

@@ -1,19 +1,24 @@
 import React, { useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   BookOpen,
   CheckCircle2,
   Combine,
   Download,
+  FileText,
   ImagePlus,
   Loader2,
   Pause,
   Pencil,
   Plus,
   Save,
+  Share2,
+  SlidersHorizontal,
   Trash2,
   Unlink,
+  Users,
   Volume2,
   X,
 } from 'lucide-react';
@@ -25,7 +30,12 @@ import {
   StoryProject,
   StoryTurn,
 } from '../types/story';
-import { downloadChapterHtml } from '../utils/htmlExport';
+import {
+  downloadChapterHtml,
+  downloadStoryArchiveJson,
+  downloadStoryHtml,
+} from '../utils/htmlExport';
+import { downloadChapterPdf, downloadStoryPdf } from '../utils/pdfExport';
 import { IllustrationFigure } from './IllustrationFigure';
 import { IllustrationModal, IllustrationTarget } from './IllustrationModal';
 import { ItemLoreModal, LoreTarget } from './ItemLoreModal';
@@ -48,6 +58,12 @@ interface ChaptersViewProps {
   onOpenCrossIndex?: () => void;
   onCorrectTurn?: (updatedTurn: StoryTurn) => void;
   speech: NarrativeSpeechControls;
+  onPersistNow: (
+    scopeLabel?: string,
+  ) => Promise<{ ok: boolean; location: 'cloud' | 'local'; message: string }>;
+  onShareStory: () => void;
+  onCollaborateStory?: () => void;
+  onShareChapter: (chapter: StoryChapter, turns: StoryTurn[]) => void;
 }
 
 export const ChaptersView: React.FC<ChaptersViewProps> = ({
@@ -60,6 +76,10 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
   onOpenCrossIndex,
   onCorrectTurn,
   speech,
+  onPersistNow,
+  onShareStory,
+  onCollaborateStory,
+  onShareChapter,
 }) => {
   const chapters = useMemo(
     () => [...(project.chapters ?? [])].sort((a, b) => a.chapterNumber - b.chapterNumber),
@@ -98,9 +118,29 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
   const [editingChapter, setEditingChapter] = useState<StoryChapter | null>(null);
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const [saveToast, setSaveToast] = useState<string | null>(null);
+  const [persistError, setPersistError] = useState<string | null>(null);
+  const [isPersisting, setIsPersisting] = useState(false);
   const [loreTarget, setLoreTarget] = useState<LoreTarget | null>(null);
   const [illustrationTarget, setIllustrationTarget] =
     useState<IllustrationTarget | null>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+  const handlePersist = async (scopeLabel?: string) => {
+    if (isPersisting) return;
+    setPersistError(null);
+    setIsPersisting(true);
+    try {
+      const result = await onPersistNow(scopeLabel);
+      if (result.ok) {
+        setSaveToast(result.message);
+        setTimeout(() => setSaveToast(null), 3000);
+      } else {
+        setPersistError(result.message);
+      }
+    } finally {
+      setIsPersisting(false);
+    }
+  };
 
   const renumberChapters = (list: StoryChapter[]): StoryChapter[] =>
     list.map((ch, idx) => ({ ...ch, chapterNumber: idx + 1 }));
@@ -237,33 +277,41 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
   return (
     <div className="max-w-[1280px] mx-auto px-4 sm:px-8 py-8 space-y-8">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-6 border-b border-neutral-200">
-        <div>
-          <p className="text-xs text-[#6B7280]">
-            {project.title} <span aria-hidden="true">·</span> {project.universe}
-          </p>
-          <h1 className="font-editorial text-3xl font-semibold text-[#111827] mt-1">
-            Chapter Organization
-          </h1>
-          <p className="text-sm text-[#4B5563] mt-1.5 max-w-2xl">
-            Select and merge multiple story blurbs into cohesive chapters, reorder scenes, and export the manuscript as HTML with prompts preserved.
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => onOpenHtmlExport()}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#1D4ED8] hover:bg-[#1E40AF] rounded-lg transition-colors whitespace-nowrap shrink-0"
-        >
-          <Download className="w-4 h-4" />
-          Export HTML
-        </button>
+      <div className="pb-6 border-b border-neutral-200">
+        <p className="text-xs text-[#6B7280]">
+          {project.title} <span aria-hidden="true">·</span> {project.universe}
+        </p>
+        <h1 className="font-editorial text-3xl font-semibold text-[#111827] mt-1">
+          Chapter Organization
+        </h1>
+        <p className="text-sm text-[#4B5563] mt-1.5 max-w-2xl">
+          Select and merge multiple story blurbs into cohesive chapters, reorder scenes, and download your manuscript as PDF or HTML with prompts preserved.
+        </p>
       </div>
 
       {saveToast && (
         <div className="px-4 py-2.5 text-sm text-[#15803D] bg-[#F0FDF4] border border-[#BBF7D0] rounded-lg flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 shrink-0" />
           <span>{saveToast}</span>
+        </div>
+      )}
+
+      {persistError && (
+        <div
+          role="alert"
+          className="px-4 py-2.5 text-sm text-[#991B1B] bg-[#FEF2F2] border border-[#FECACA] rounded-lg flex items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-[#DC2626]" />
+            <span className="break-words">{persistError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPersistError(null)}
+            className="text-xs font-medium underline shrink-0"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -436,6 +484,8 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
                   .join('\n\n'),
                 tone: project.tone,
               };
+              const isTtsReady = speech.isItemReady(ttsItem);
+              const isTtsPrecomputing = speech.isItemPrecomputing(ttsItem);
 
               return (
                 <article
@@ -518,7 +568,20 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
                               ? `Pause narration for chapter ${chapter.chapterNumber}`
                               : `Listen to chapter ${chapter.chapterNumber}`
                         }
-                        title="Read chapter aloud (Text-to-Speech)"
+                        title={
+                          isTtsReady
+                            ? 'Narration ready — click to play immediately'
+                            : isTtsPrecomputing
+                              ? 'Pre-computing narration in background...'
+                              : 'Read chapter aloud (Text-to-Speech)'
+                        }
+                        data-narration-status={
+                          isTtsReady
+                            ? 'ready'
+                            : isTtsPrecomputing
+                              ? 'precomputing'
+                              : 'idle'
+                        }
                         className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium border rounded-md transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 ${
                           isTtsActive || isTtsLoading
                             ? 'text-[#1D4ED8] bg-[#EFF6FF] border-[#BFDBFE]'
@@ -580,24 +643,66 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
                       </button>
                       <button
                         type="button"
+                        disabled={isPersisting}
+                        onClick={() =>
+                          void handlePersist(
+                            `Chapter ${String(chapter.chapterNumber).padStart(2, '0')}`,
+                          )
+                        }
+                        aria-label={`Save chapter ${chapter.chapterNumber} to Firestore`}
+                        title="Save chapter to Firestore & browser storage"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-[#4B5563] hover:text-[#1D4ED8] border border-neutral-200 hover:bg-[#F8FAFC] hover:border-[#BFDBFE] disabled:opacity-50 rounded-md transition-colors whitespace-nowrap shrink-0"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        disabled={chTurns.length === 0}
+                        onClick={() => onShareChapter(chapter, chTurns)}
+                        aria-label={`Share chapter ${chapter.chapterNumber}`}
+                        title="Share chapter via Firestore link"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-[#4B5563] hover:text-[#1D4ED8] border border-neutral-200 hover:bg-[#F8FAFC] hover:border-[#BFDBFE] disabled:opacity-40 rounded-md transition-colors whitespace-nowrap shrink-0"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                        Share
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => {
                           const filename = downloadChapterHtml(project, chapter);
                           setSaveToast(`Saved ${filename}`);
                           setTimeout(() => setSaveToast(null), 2600);
                         }}
-                        aria-label={`Save chapter ${chapter.chapterNumber} HTML`}
-                        title="Save chapter HTML source"
-                        className="p-1.5 text-[#6B7280] hover:text-[#1D4ED8] hover:bg-[#F8FAFC] border border-neutral-200 hover:border-[#BFDBFE] rounded-md transition-colors"
-                      >
-                        <Save className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onOpenHtmlExport(chapter.id)}
+                        aria-label={`Download chapter ${chapter.chapterNumber} HTML`}
+                        title="Download chapter as HTML"
                         className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-[#1D4ED8] border border-neutral-200 hover:bg-[#F8FAFC] rounded-md whitespace-nowrap"
                       >
                         <Download className="w-3.5 h-3.5" />
                         HTML
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const filename = await downloadChapterPdf(project, chapter);
+                          setSaveToast(`Saved ${filename}`);
+                          setTimeout(() => setSaveToast(null), 2600);
+                        }}
+                        aria-label={`Download chapter ${chapter.chapterNumber} PDF`}
+                        title="Download chapter as PDF"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-[#1D4ED8] border border-neutral-200 hover:bg-[#F8FAFC] rounded-md whitespace-nowrap"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        PDF
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onOpenHtmlExport(chapter.id)}
+                        title="Customize chapter export options"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-[#4B5563] border border-neutral-200 hover:bg-[#F8FAFC] rounded-md whitespace-nowrap"
+                      >
+                        <SlidersHorizontal className="w-3.5 h-3.5" />
+                        Export
                       </button>
                     </div>
                   </div>
@@ -818,6 +923,112 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
           )}
         </section>
       </div>
+
+      {/* Bottom Page Action & Download Bar */}
+      <footer
+        aria-label="Chapter Manuscript Downloads"
+        className="pt-6 border-t border-neutral-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+      >
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            disabled={isPersisting}
+            onClick={() => void handlePersist('Story & Chapters')}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap shrink-0"
+          >
+            {isPersisting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-[#1D4ED8]" />
+                Saving Story...
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4 text-[#1D4ED8]" />
+                Save Story
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={onShareStory}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
+          >
+            <Share2 className="w-4 h-4 text-[#1D4ED8]" />
+            Share Story
+          </button>
+          {onCollaborateStory && (
+            <button
+              type="button"
+              onClick={onCollaborateStory}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
+            >
+              <Users className="w-4 h-4 text-[#1D4ED8]" />
+              Collaborate
+            </button>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          <button
+            type="button"
+            disabled={isExportingPdf}
+            onClick={async () => {
+              setIsExportingPdf(true);
+              try {
+                const filename = await downloadStoryPdf(project);
+                setSaveToast(`Saved ${filename}`);
+                setTimeout(() => setSaveToast(null), 2600);
+              } finally {
+                setIsExportingPdf(false);
+              }
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#1D4ED8] hover:bg-[#1E40AF] disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap shrink-0"
+          >
+            {isExportingPdf ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Generating PDF...
+              </>
+            ) : (
+              <>
+                <FileText className="w-4 h-4" />
+                Download PDF
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const filename = downloadStoryHtml(project);
+              setSaveToast(`Saved ${filename}`);
+              setTimeout(() => setSaveToast(null), 2600);
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
+          >
+            <Download className="w-4 h-4 text-[#1D4ED8]" />
+            Download HTML
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const filename = downloadStoryArchiveJson(project);
+              setSaveToast(`Saved ${filename}`);
+              setTimeout(() => setSaveToast(null), 2600);
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
+          >
+            <Download className="w-4 h-4 text-[#4B5563]" />
+            Download JSON
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenHtmlExport()}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
+          >
+            <SlidersHorizontal className="w-4 h-4 text-[#4B5563]" />
+            Export Options
+          </button>
+        </div>
+      </footer>
 
       {/* Edit Chapter Metadata Modal */}
       {editingChapter && (

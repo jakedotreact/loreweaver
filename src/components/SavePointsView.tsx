@@ -1,7 +1,21 @@
 import React, { useRef, useState } from 'react';
-import { Bookmark, Download, RotateCcw, Trash2, Upload } from 'lucide-react';
+import {
+  Bookmark,
+  CheckCircle2,
+  Download,
+  FileText,
+  Loader2,
+  RotateCcw,
+  SlidersHorizontal,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import { SavePoint, StoryProject } from '../types/story';
-import { saveTextFile } from '../utils/htmlExport';
+import {
+  downloadStoryArchiveJson,
+  downloadStoryHtml,
+} from '../utils/htmlExport';
+import { downloadStoryPdf } from '../utils/pdfExport';
 
 interface SavePointsViewProps {
   project: StoryProject;
@@ -22,6 +36,8 @@ export const SavePointsView: React.FC<SavePointsViewProps> = ({
 }) => {
   const [label, setLabel] = useState('');
   const [importError, setImportError] = useState<string | null>(null);
+  const [downloadToast, setDownloadToast] = useState<string | null>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const latestTurn = project.turns[project.turns.length - 1];
@@ -38,9 +54,9 @@ export const SavePointsView: React.FC<SavePointsViewProps> = ({
   };
 
   const handleExport = () => {
-    const payload = JSON.stringify(project, null, 2);
-    const slug = project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    saveTextFile(`${slug || 'story'}-archive.json`, payload, 'application/json;charset=utf-8');
+    const filename = downloadStoryArchiveJson(project);
+    setDownloadToast(`Saved ${filename}`);
+    setTimeout(() => setDownloadToast(null), 2600);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -71,53 +87,24 @@ export const SavePointsView: React.FC<SavePointsViewProps> = ({
   return (
     <div className="max-w-[1040px] mx-auto px-4 sm:px-8 py-8 space-y-8">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-6 border-b border-neutral-200">
-        <div>
-          <p className="text-xs text-[#6B7280]">
-            {project.title} <span aria-hidden="true">·</span> {project.universe}
-          </p>
-          <h1 className="font-editorial text-3xl font-semibold text-[#111827] mt-1">
-            Save Points &amp; Archives
-          </h1>
-          <p className="text-sm text-[#4B5563] mt-1.5 max-w-2xl">
-            Capture exact snapshots of narrative history, character inventories, and Cross-Index state—or export your full story as HTML or JSON.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          <button
-            type="button"
-            onClick={onOpenHtmlExport}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap"
-          >
-            <Download className="w-4 h-4 text-[#1D4ED8]" />
-            Export HTML
-          </button>
-          <button
-            type="button"
-            onClick={handleExport}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap"
-          >
-            <Download className="w-4 h-4 text-[#4B5563]" />
-            Export JSON
-          </button>
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap"
-          >
-            <Upload className="w-4 h-4 text-[#4B5563]" />
-            Import JSON
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/json,.json"
-            onChange={handleFileChange}
-            className="hidden"
-          />
-        </div>
+      <div className="pb-6 border-b border-neutral-200">
+        <p className="text-xs text-[#6B7280]">
+          {project.title} <span aria-hidden="true">·</span> {project.universe}
+        </p>
+        <h1 className="font-editorial text-3xl font-semibold text-[#111827] mt-1">
+          Save Points &amp; Archives
+        </h1>
+        <p className="text-sm text-[#4B5563] mt-1.5 max-w-2xl">
+          Capture exact snapshots of narrative history, character inventories, and Cross-Index state—or download your full story as PDF, HTML, or JSON below.
+        </p>
       </div>
+
+      {downloadToast && (
+        <div className="px-4 py-2.5 text-sm text-[#15803D] bg-[#F0FDF4] border border-[#BBF7D0] rounded-lg flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <span>{downloadToast}</span>
+        </div>
+      )}
 
       {importError && (
         <div className="p-3.5 text-sm text-[#991B1B] bg-[#FEF2F2] border border-[#FECACA] rounded-lg">
@@ -226,6 +213,88 @@ export const SavePointsView: React.FC<SavePointsViewProps> = ({
           </div>
         )}
       </section>
+
+      {/* Bottom Archive & Download Bar */}
+      <footer
+        aria-label="Archive and Manuscript Downloads"
+        className="pt-6 border-t border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+      >
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
+          >
+            <Upload className="w-4 h-4 text-[#4B5563]" />
+            Import JSON
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            onChange={handleFileChange}
+            className="hidden"
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          <button
+            type="button"
+            disabled={isExportingPdf}
+            onClick={async () => {
+              setIsExportingPdf(true);
+              try {
+                const filename = await downloadStoryPdf(project);
+                setDownloadToast(`Saved ${filename}`);
+                setTimeout(() => setDownloadToast(null), 2600);
+              } finally {
+                setIsExportingPdf(false);
+              }
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#1D4ED8] hover:bg-[#1E40AF] disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap shrink-0"
+          >
+            {isExportingPdf ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Generating PDF...
+              </>
+            ) : (
+              <>
+                <FileText className="w-4 h-4" />
+                Download PDF
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const filename = downloadStoryHtml(project);
+              setDownloadToast(`Saved ${filename}`);
+              setTimeout(() => setDownloadToast(null), 2600);
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
+          >
+            <Download className="w-4 h-4 text-[#1D4ED8]" />
+            Download HTML
+          </button>
+          <button
+            type="button"
+            onClick={handleExport}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
+          >
+            <Download className="w-4 h-4 text-[#4B5563]" />
+            Download JSON
+          </button>
+          <button
+            type="button"
+            onClick={onOpenHtmlExport}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
+          >
+            <SlidersHorizontal className="w-4 h-4 text-[#4B5563]" />
+            Export Options
+          </button>
+        </div>
+      </footer>
     </div>
   );
 };

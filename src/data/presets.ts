@@ -34,6 +34,22 @@ export const UNIVERSE_TEMPLATES: UniverseTemplate[] = [
         'In the wake of Cedric Diggory’s death and the Ministry’s denial of Voldemort’s return, Harry Potter notices an unlisted ledger locked inside the Room of Requirement—listing students whose wand cores match spells cast outside school grounds under suspicious Ministry warrants.',
       coverImage: '/src/assets/images/cover_wizarding_academy_1794799109983.jpg',
       protagonistId: 'char-harry',
+      isPrivate: false,
+      tags: {
+        rating: 'Teen And Up Audiences',
+        warnings: ['No Archive Warnings Apply'],
+        categories: ['Gen'],
+        fandoms: ['Harry Potter (Wizarding World)'],
+        relationships: ['Harry Potter & Hermione Granger', 'Harry Potter & Severus Snape'],
+        characters: ['Harry Potter', 'Hermione Granger', 'Severus Snape', 'Dolores Umbridge'],
+        freeforms: [
+          'Alternate Universe - Canon Divergence',
+          'Fifth Year at Hogwarts',
+          'Mystery & Investigation',
+          'Ministry Intrigue',
+          'Found Family',
+        ],
+      },
       updatedAt: Date.now(),
       characters: [
         {
@@ -313,6 +329,22 @@ export const UNIVERSE_TEMPLATES: UniverseTemplate[] = [
         'Weeks after House Atreides assumes stewardship of Arrakis, a water-shipper’s corpse is discovered inside the conservatory cistern with a Harkonnen cipher ring—and an authentic Fremen crysknife sheath missing its blade.',
       coverImage: '/src/assets/images/cover_desert_citadel_1794799110791.jpg',
       protagonistId: 'char-paul',
+      isPrivate: false,
+      tags: {
+        rating: 'Teen And Up Audiences',
+        warnings: ['Graphic Depictions Of Violence'],
+        categories: ['Gen'],
+        fandoms: ['Dune (Arrakis)'],
+        relationships: ['Paul Atreides & Lady Jessica', 'Lady Jessica & Thufir Hawat'],
+        characters: ['Paul Atreides', 'Lady Jessica', 'Thufir Hawat'],
+        freeforms: [
+          'Political Intrigue',
+          'Ecological Worldbuilding',
+          'Espionage',
+          'Bene Gesserit Lore',
+          'Case Fic',
+        ],
+      },
       updatedAt: Date.now(),
       characters: [
         {
@@ -519,6 +551,22 @@ export const UNIVERSE_TEMPLATES: UniverseTemplate[] = [
         'When the Chief Astronomer vanishes from Meridian’s locked lighthouse observatory during a tidal eclipse, Inspector Clara Vance inherits a ledger written in navigational cipher—and a brass astrolabe whose gears tick backward whenever someone in the room lies.',
       coverImage: '/src/assets/images/cover_clockwork_harbor_1794799110775.jpg',
       protagonistId: 'char-clara',
+      isPrivate: false,
+      tags: {
+        rating: 'Teen And Up Audiences',
+        warnings: ['No Archive Warnings Apply'],
+        categories: ['Gen', 'F/M'],
+        fandoms: ['Original Work', 'Clockwork Maritime Noir'],
+        relationships: ['Inspector Clara Vance & Harbormaster Gideon Rook'],
+        characters: ['Inspector Clara Vance', 'Harbormaster Gideon Rook'],
+        freeforms: [
+          'Locked Room Mystery',
+          'Victorian Maritime Noir',
+          'Clockwork Artifacts',
+          'Detective Investigation',
+          'Gaslamp Fantasy',
+        ],
+      },
       updatedAt: Date.now(),
       characters: [
         {

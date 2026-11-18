@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  AtSign,
   CheckCircle2,
   Loader2,
   LogIn,
   LogOut,
   RefreshCw,
+  Settings,
   Shield,
   Sliders,
   User as UserIcon,
@@ -13,40 +15,26 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAvailableModels } from '../hooks/useAvailableModels';
-import { ModelConfig, ModelThinkingLevel, TtsVoiceName } from '../types/story';
+import { ModelConfig } from '../types/story';
 
 interface AccountSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  username: string;
+  onChangeUsername: (nextUsername: string) => Promise<void> | void;
   modelConfig: ModelConfig;
   onChangeModelConfig: (next: ModelConfig) => void;
-  preferredVoice: TtsVoiceName;
-  onChangeVoice: (nextVoice: TtsVoiceName) => void;
+  onOpenStudioSettings?: () => void;
 }
-
-const VOICE_OPTIONS: Array<{ id: TtsVoiceName; label: string }> = [
-  { id: 'Charon', label: 'Charon — Warm Baritone' },
-  { id: 'Kore', label: 'Kore — Clear Literary' },
-  { id: 'Fenrir', label: 'Fenrir — Deep Dramatic' },
-  { id: 'Puck', label: 'Puck — Lively Expressive' },
-  { id: 'Zephyr', label: 'Zephyr — Calm Velvet' },
-];
-
-const THINKING_LABELS: Record<ModelThinkingLevel, string> = {
-  MINIMAL: 'Minimal (Fastest)',
-  LOW: 'Low',
-  MEDIUM: 'Medium',
-  HIGH: 'High (Recommended)',
-  XHIGH: 'Extra High (Max Depth)',
-};
 
 export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   isOpen,
   onClose,
+  username,
+  onChangeUsername,
   modelConfig,
   onChangeModelConfig,
-  preferredVoice,
-  onChangeVoice,
+  onOpenStudioSettings,
 }) => {
   const {
     user,
@@ -61,6 +49,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   } = useAuth();
   const { models, isRefreshing, refreshModels } = useAvailableModels();
 
+  const [draftUsername, setDraftUsername] = useState(username);
   const [selectedAllowed, setSelectedAllowed] = useState<string[]>([]);
   const [restrictModels, setRestrictModels] = useState(false);
   const [avatarFailed, setAvatarFailed] = useState(false);
@@ -71,6 +60,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
     if (!isOpen) return;
     setAvatarFailed(false);
     setSavedNotice(null);
+    setDraftUsername(username);
     const list = userSettings?.allowedModels ?? [];
     setSelectedAllowed(list);
     setRestrictModels(list.length > 0);
@@ -80,12 +70,9 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, userSettings?.allowedModels, onClose]);
+  }, [isOpen, username, userSettings?.allowedModels, onClose]);
 
   if (!isOpen) return null;
-
-  const activeModelOption =
-    models.find((m) => m.id === modelConfig.model) ?? models[0];
 
   const handleToggleAllowedModel = (modelId: string) => {
     setSelectedAllowed((prev) =>
@@ -95,32 +82,37 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
     );
   };
 
-  const handleSavePreferences = async (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    const cleanedUsername = draftUsername.trim().slice(0, 40);
     setIsSaving(true);
     setSavedNotice(null);
     try {
-      const nextAllowed = restrictModels ? selectedAllowed : [];
-      let nextModel = modelConfig.model;
-      let nextThinking = modelConfig.thinkingLevel;
+      await onChangeUsername(cleanedUsername);
 
-      if (nextAllowed.length > 0 && !nextAllowed.includes(nextModel)) {
-        nextModel = nextAllowed[0];
-        const matched = models.find((m) => m.id === nextModel);
-        if (matched && !matched.allowedThinkingLevels.includes(nextThinking)) {
-          nextThinking = matched.defaultThinking;
+      if (user) {
+        const nextAllowed = restrictModels ? selectedAllowed : [];
+        let nextModel = modelConfig.model;
+        let nextThinking = modelConfig.thinkingLevel;
+
+        if (nextAllowed.length > 0 && !nextAllowed.includes(nextModel)) {
+          nextModel = nextAllowed[0];
+          const matched = models.find((m) => m.id === nextModel);
+          if (matched && !matched.allowedThinkingLevels.includes(nextThinking)) {
+            nextThinking = matched.defaultThinking;
+          }
+          onChangeModelConfig({ model: nextModel, thinkingLevel: nextThinking });
         }
-        onChangeModelConfig({ model: nextModel, thinkingLevel: nextThinking });
+
+        await updateUserSettings({
+          username: cleanedUsername || undefined,
+          preferredModel: nextModel,
+          thinkingLevel: nextThinking,
+          allowedModels: nextAllowed,
+        });
       }
 
-      await updateUserSettings({
-        preferredModel: nextModel,
-        thinkingLevel: nextThinking,
-        preferredVoice,
-        allowedModels: nextAllowed,
-      });
-      setSavedNotice('Settings saved to your cloud profile.');
+      setSavedNotice('Account username and profile saved.');
       setTimeout(() => setSavedNotice(null), 2600);
     } finally {
       setIsSaving(false);
@@ -137,20 +129,20 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-2xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden my-auto max-h-[90vh] flex flex-col">
+      <div className="w-full max-w-xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden my-auto max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-neutral-200 flex items-start justify-between gap-4 shrink-0">
           <div className="flex items-start gap-3">
             <Sliders className="w-5 h-5 text-[#1D4ED8] shrink-0 mt-1" />
             <div>
               <p className="text-xs text-[#6B7280]">
-                OAuth Account &amp; Cloud Sync
+                Author Handle, OAuth &amp; Allowed Models
               </p>
               <h2
                 id="account-settings-heading"
                 className="font-editorial text-xl sm:text-2xl font-semibold text-[#111827] mt-0.5"
               >
-                Account &amp; Model Associations
+                Account Profile
               </h2>
             </div>
           </div>
@@ -164,7 +156,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
           </button>
         </div>
 
-        <div className="p-6 space-y-6 overflow-y-auto flex-1">
+        <form onSubmit={handleSaveProfile} className="p-6 space-y-6 overflow-y-auto flex-1">
           {(authError || syncError) && (
             <div
               role="alert"
@@ -193,38 +185,58 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
             </div>
           )}
 
+          {/* Custom Freely Chooseable Account Username */}
+          <section className="space-y-2">
+            <label
+              htmlFor="account-username-input"
+              className="flex items-center gap-1.5 text-sm font-semibold text-[#111827]"
+            >
+              <AtSign className="w-4 h-4 text-[#1D4ED8]" />
+              Account Username
+            </label>
+            <input
+              id="account-username-input"
+              type="text"
+              value={draftUsername}
+              onChange={(e) => setDraftUsername(e.target.value)}
+              maxLength={40}
+              placeholder="Choose any author or reader pen name..."
+              className="w-full px-3 py-2 text-sm text-[#111827] bg-white border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+            />
+            <p className="text-xs text-[#6B7280]">
+              Displayed publicly on stories you index, comments, and non-anonymous kudos. Max 40 characters.
+            </p>
+          </section>
+
           {/* Authentication Card */}
           {!user ? (
-            <section className="border border-neutral-200 rounded-xl p-6 space-y-4 bg-neutral-50">
+            <section className="border border-neutral-200 rounded-xl p-5 space-y-3 bg-neutral-50">
               <div className="flex items-start gap-3">
                 <Shield className="w-5 h-5 text-[#1D4ED8] shrink-0 mt-0.5" />
                 <div>
-                  <h3 className="text-base font-semibold text-[#111827]">
+                  <h3 className="text-sm font-semibold text-[#111827]">
                     Sign in with Google OAuth
                   </h3>
-                  <p className="text-sm text-[#4B5563] mt-1 leading-relaxed">
-                    Persist your preferred Gemini model, reasoning depth, narrator voice, per-user model associations, and stories in Firestore across sessions and devices.
+                  <p className="text-xs text-[#4B5563] mt-1 leading-relaxed">
+                    Sync your username, stories, collections, subscriptions, and model preferences to Firestore across devices.
                   </p>
                 </div>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                <span className="text-xs text-[#6B7280]">
-                  Guest sessions continue using browser storage until you sign in.
-                </span>
+              <div className="flex justify-end">
                 <button
                   type="button"
                   disabled={isSigningIn}
                   onClick={() => void signInWithGoogle()}
-                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#1D4ED8] hover:bg-[#1E40AF] disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium text-white bg-[#1D4ED8] hover:bg-[#1E40AF] disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   {isSigningIn ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       Connecting...
                     </>
                   ) : (
                     <>
-                      <LogIn className="w-4 h-4" />
+                      <LogIn className="w-3.5 h-3.5" />
                       Continue with Google
                     </>
                   )}
@@ -232,8 +244,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
               </div>
             </section>
           ) : (
-            <form onSubmit={handleSavePreferences} className="space-y-6">
-              {/* Signed-in User Bar */}
+            <>
               <div className="border border-neutral-200 rounded-xl p-4 bg-neutral-50 flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3 min-w-0">
                   {user.photoURL && !avatarFailed ? (
@@ -259,133 +270,34 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                 <button
                   type="button"
                   onClick={() => void signOutUser()}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#374151] bg-white hover:bg-neutral-100 border border-neutral-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#374151] bg-white hover:bg-neutral-100 border border-neutral-300 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                   Sign Out
                 </button>
               </div>
 
-              {/* Default Preferences */}
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-[#111827] pb-2 border-b border-neutral-100">
-                  Persistent Studio Preferences
-                </h3>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label
-                      htmlFor="acct-default-model"
-                      className="block text-xs font-medium text-[#111827] mb-1"
-                    >
-                      Default Narrative Model
-                    </label>
-                    <select
-                      id="acct-default-model"
-                      value={activeModelOption?.id ?? modelConfig.model}
-                      onChange={(e) => {
-                        const nextId = e.target.value;
-                        const opt = models.find((m) => m.id === nextId);
-                        const validLevel = opt?.allowedThinkingLevels.includes(
-                          modelConfig.thinkingLevel,
-                        )
-                          ? modelConfig.thinkingLevel
-                          : opt?.defaultThinking ?? 'HIGH';
-                        onChangeModelConfig({
-                          model: nextId,
-                          thinkingLevel: validLevel,
-                        });
-                      }}
-                      className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
-                    >
-                      {models.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label === m.id ? m.label : `${m.label} (${m.id})`}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {activeModelOption?.supportsThinkingLevel && (
-                    <div>
-                      <label
-                        htmlFor="acct-thinking-level"
-                        className="block text-xs font-medium text-[#111827] mb-1"
-                      >
-                        Default Reasoning Depth
-                      </label>
-                      <select
-                        id="acct-thinking-level"
-                        value={
-                          activeModelOption.allowedThinkingLevels.includes(
-                            modelConfig.thinkingLevel,
-                          )
-                            ? modelConfig.thinkingLevel
-                            : activeModelOption.defaultThinking
-                        }
-                        onChange={(e) =>
-                          onChangeModelConfig({
-                            ...modelConfig,
-                            thinkingLevel: e.target.value as ModelThinkingLevel,
-                          })
-                        }
-                        className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
-                      >
-                        {activeModelOption.allowedThinkingLevels.map((lvl) => (
-                          <option key={lvl} value={lvl}>
-                            {THINKING_LABELS[lvl]}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="acct-tts-voice"
-                    className="block text-xs font-medium text-[#111827] mb-1"
-                  >
-                    Default Narrator Voice (Text-to-Speech)
-                  </label>
-                  <select
-                    id="acct-tts-voice"
-                    value={preferredVoice}
-                    onChange={(e) =>
-                      onChangeVoice(e.target.value as TtsVoiceName)
-                    }
-                    className="w-full sm:w-1/2 px-3 py-2 text-xs bg-white border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
-                  >
-                    {VOICE_OPTIONS.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </section>
-
               {/* Per-User Model Associations */}
               <section className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-neutral-100">
                   <div>
                     <h3 className="text-sm font-semibold text-[#111827]">
-                      Associated Models for Your Account
+                      Associated Models
                     </h3>
                     <p className="text-xs text-[#6B7280] mt-0.5">
-                      Choose whether this user profile can access all discovered models or a curated subset.
+                      Restrict your profile to specific discovered models if desired.
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => void refreshModels()}
                     disabled={isRefreshing}
-                    className="inline-flex items-center gap-1 text-xs font-medium text-[#1D4ED8] hover:underline disabled:opacity-50 whitespace-nowrap shrink-0"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-[#1D4ED8] hover:underline disabled:opacity-50 whitespace-nowrap shrink-0 cursor-pointer"
                   >
                     <RefreshCw
                       className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`}
                     />
-                    Refresh Discovered
+                    Refresh
                   </button>
                 </div>
 
@@ -402,11 +314,11 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                     }}
                     className="rounded border-neutral-300 text-[#1D4ED8] focus:ring-[#1D4ED8]"
                   />
-                  Allow all extracted models for this account ({models.length} available)
+                  Allow all extracted models ({models.length} available)
                 </label>
 
                 {restrictModels && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 max-h-48 overflow-y-auto pr-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 max-h-44 overflow-y-auto pr-1">
                     {models.map((m) => {
                       const checked = selectedAllowed.includes(m.id);
                       return (
@@ -438,26 +350,44 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                   </div>
                 )}
               </section>
-
-              <div className="pt-4 border-t border-neutral-200 flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-4 py-2 text-sm font-medium text-[#4B5563] hover:text-[#111827]"
-                >
-                  Close
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSaving || (restrictModels && selectedAllowed.length === 0)}
-                  className="px-5 py-2 text-sm font-medium text-white bg-[#1D4ED8] hover:bg-[#1E40AF] disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap"
-                >
-                  {isSaving ? 'Saving...' : 'Save Settings'}
-                </button>
-              </div>
-            </form>
+            </>
           )}
-        </div>
+
+          {/* Direct link to Studio Settings (avoids duplicate model/voice forms) */}
+          {onOpenStudioSettings && (
+            <div className="pt-2 flex items-center justify-between text-xs text-[#6B7280] border-t border-neutral-100">
+              <span>Model selection, TTS voice &amp; auto-play live in Studio Settings.</span>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenStudioSettings();
+                }}
+                className="inline-flex items-center gap-1 font-medium text-[#1D4ED8] hover:underline shrink-0 cursor-pointer"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                Studio Settings
+              </button>
+            </div>
+          )}
+
+          <div className="pt-3 border-t border-neutral-200 flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-[#4B5563] hover:text-[#111827] cursor-pointer"
+            >
+              Close
+            </button>
+            <button
+              type="submit"
+              disabled={isSaving || (user ? restrictModels && selectedAllowed.length === 0 : false)}
+              className="px-5 py-2 text-sm font-medium text-white bg-[#1D4ED8] hover:bg-[#1E40AF] disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+            >
+              {isSaving ? 'Saving...' : 'Save Account'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

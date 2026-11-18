@@ -112,11 +112,117 @@ export interface SavePoint {
   snapshot: StorySnapshot;
 }
 
+export type Ao3Rating =
+  | 'General Audiences'
+  | 'Teen And Up Audiences'
+  | 'Mature'
+  | 'Explicit'
+  | 'Not Rated';
+
+export type Ao3Warning =
+  | 'Creator Chose Not To Use Archive Warnings'
+  | 'No Archive Warnings Apply'
+  | 'Graphic Depictions Of Violence'
+  | 'Major Character Death'
+  | 'Rape/Non-Con'
+  | 'Underage Sex';
+
+export type Ao3Category = 'Gen' | 'F/F' | 'F/M' | 'M/M' | 'Multi' | 'Other';
+
+export interface StoryTags {
+  rating: Ao3Rating;
+  warnings: Ao3Warning[];
+  categories: Ao3Category[];
+  fandoms: string[];
+  relationships: string[];
+  characters: string[];
+  freeforms: string[];
+}
+
 export interface StoryProject extends StorySnapshot {
   id: string;
   coverImage?: string;
   savePoints: SavePoint[];
+  shareId?: string;
+  collabId?: string;
+  publicStoryId?: string;
+  isPrivate?: boolean;
+  tags?: StoryTags;
   updatedAt: number;
+}
+
+export type StoryDisplayMode = 'scene' | 'chapters' | 'story';
+
+export type CommentTargetType = 'story' | 'chapter' | 'scene';
+
+export interface PublicStoryWork {
+  id: string;
+  ownerUid: string;
+  sourceStoryId: string;
+  authorName: string;
+  title: string;
+  universe: string;
+  setting: string;
+  tone: string;
+  premise: string;
+  coverImage?: string;
+  isPrivate: boolean;
+  tags: StoryTags;
+  turns: StoryTurn[];
+  chapters: StoryChapter[];
+  characters: CharacterProfile[];
+  wordCount: number;
+  kudosCount: number;
+  commentCount: number;
+  isLocalSeed?: boolean;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface StoryComment {
+  id: string;
+  storyId: string;
+  authorUid: string;
+  authorName: string;
+  body: string;
+  targetType?: CommentTargetType;
+  targetId?: string;
+  targetLabel?: string;
+  chapterOrSceneLabel?: string;
+  parentCommentId?: string;
+  storyIsPrivate: boolean;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface StoryKudoRecord {
+  id: string;
+  uid: string;
+  displayName: string;
+  isAnonymous: boolean;
+  storyIsPrivate: boolean;
+  createdAtMs: number;
+}
+
+export interface UserCollection {
+  id: string;
+  ownerUid: string;
+  name: string;
+  description: string;
+  isPrivate: boolean;
+  storyIds: string[];
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface StorySubscription {
+  storyId: string;
+  storyTitle: string;
+  authorName: string;
+  lastSeenTurnCount: number;
+  lastSeenChapterCount: number;
+  subscribedAtMs: number;
+  updatedAtMs: number;
 }
 
 export interface ContinuityAuditFinding {
@@ -155,3 +261,43 @@ export interface DiscoveredModelOption {
 
 export type TtsVoiceName = 'Kore' | 'Charon' | 'Fenrir' | 'Puck' | 'Zephyr';
 
+export type ShareScope = 'story' | 'chapter' | 'scene';
+
+export interface SharedWork {
+  id: string;
+  ownerUid: string;
+  authorName: string;
+  scope: ShareScope;
+  sourceStoryId: string;
+  targetId: string;
+  storyTitle: string;
+  workTitle: string;
+  universe: string;
+  setting: string;
+  tone: string;
+  premise: string;
+  summary: string;
+  turns: StoryTurn[];
+  chapters: StoryChapter[];
+  characters: CharacterProfile[];
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface CollaborationSession {
+  id: string;
+  ownerUid: string;
+  ownerName: string;
+  sourceStoryId: string;
+  project: StoryProject;
+  lastEditedByUid: string;
+  lastEditedByName: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface CollabParticipant {
+  clientId: string;
+  displayName: string;
+  joinedAt: number;
+}

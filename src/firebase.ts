@@ -1,17 +1,77 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+import { FirebaseApp, initializeApp } from 'firebase/app';
+import { Auth, getAuth, GoogleAuthProvider } from 'firebase/auth';
+import {
+  doc,
+  Firestore,
+  getDocFromServer,
+  getFirestore,
+} from 'firebase/firestore';
+import rawConfig from '../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const auth = getAuth(app);
+interface FirebaseAppletConfig {
+  projectId: string;
+  appId: string;
+  apiKey: string;
+  authDomain: string;
+  firestoreDatabaseId?: string;
+  storageBucket?: string;
+  messagingSenderId?: string;
+  measurementId?: string;
+}
+
+const fileConfig = rawConfig as FirebaseAppletConfig;
+
+const resolvedConfig: FirebaseAppletConfig = {
+  projectId:
+    import.meta.env.VITE_FIREBASE_PROJECT_ID?.trim() || fileConfig.projectId || '',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID?.trim() || fileConfig.appId || '',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY?.trim() || fileConfig.apiKey || '',
+  authDomain:
+    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN?.trim() || fileConfig.authDomain || '',
+  firestoreDatabaseId:
+    import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID?.trim() ||
+    fileConfig.firestoreDatabaseId ||
+    '(default)',
+  storageBucket:
+    import.meta.env.VITE_FIREBASE_STORAGE_BUCKET?.trim() ||
+    fileConfig.storageBucket ||
+    '',
+  messagingSenderId:
+    import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID?.trim() ||
+    fileConfig.messagingSenderId ||
+    '',
+  measurementId: fileConfig.measurementId || '',
+};
+
+export const isFirebaseConfigured = Boolean(
+  resolvedConfig.apiKey &&
+    resolvedConfig.projectId &&
+    resolvedConfig.appId &&
+    !resolvedConfig.apiKey.startsWith('YOUR_'),
+);
+
+let appInstance: FirebaseApp | null = null;
+let dbInstance: Firestore | null = null;
+let authInstance: Auth | null = null;
+
+if (isFirebaseConfigured) {
+  appInstance = initializeApp(resolvedConfig);
+  dbInstance = getFirestore(
+    appInstance,
+    resolvedConfig.firestoreDatabaseId || '(default)',
+  );
+  authInstance = getAuth(appInstance);
+}
+
+export const db = dbInstance;
+export const auth = authInstance;
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 async function testConnection() {
+  if (!dbInstance) return;
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    await getDocFromServer(doc(dbInstance, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.error('Please check your Firebase configuration.');
@@ -54,13 +114,13 @@ export function handleFirestoreError(
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
+      userId: authInstance?.currentUser?.uid,
+      email: authInstance?.currentUser?.email,
+      emailVerified: authInstance?.currentUser?.emailVerified,
+      isAnonymous: authInstance?.currentUser?.isAnonymous,
+      tenantId: authInstance?.currentUser?.tenantId,
       providerInfo:
-        auth.currentUser?.providerData?.map((provider) => ({
+        authInstance?.currentUser?.providerData?.map((provider) => ({
           providerId: provider.providerId,
           email: provider.email,
         })) || [],

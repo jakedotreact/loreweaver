@@ -17,6 +17,12 @@
           "description": "Display name from OAuth profile.",
           "maxLength": 120
         },
+        "username": {
+          "type": "string",
+          "description": "Custom freely chooseable public author/reader handle.",
+          "minLength": 1,
+          "maxLength": 40
+        },
         "email": {
           "type": "string",
           "format": "email",
@@ -43,6 +49,10 @@
           "type": "string",
           "description": "User's default Text-to-Speech narrator voice.",
           "enum": ["Kore", "Charon", "Fenrir", "Puck", "Zephyr"]
+        },
+        "autoPlayNarration": {
+          "type": "boolean",
+          "description": "Whether pre-computed narration automatically starts playback on success."
         },
         "allowedModels": {
           "type": "array",
@@ -146,6 +156,32 @@
           "type": "array",
           "description": "Manual or automatic checkpoints."
         },
+        "shareId": {
+          "type": "string",
+          "description": "Optional active public read-only share ID for the full story.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "collabId": {
+          "type": "string",
+          "description": "Optional active live collaboration room ID for the story.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "publicStoryId": {
+          "type": "string",
+          "description": "Deterministic or assigned public Story Index identifier.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "isPrivate": {
+          "type": "boolean",
+          "description": "When true, strictly excludes this story from the public Landing Page Story Index."
+        },
+        "tags": {
+          "type": "object",
+          "description": "AO3-style structured story taxonomy (rating, warnings, categories, fandoms, relationships, characters, freeforms)."
+        },
         "clientUpdatedAt": {
           "type": "number",
           "description": "Client millisecond timestamp for merge ordering."
@@ -179,6 +215,544 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "SharedWork": {
+      "title": "SharedWork",
+      "description": "Link-shareable snapshot of a full story, organized chapter, or individual scene without private user PII.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unguessable share identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the publishing author.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "description": "Public display or pen name of the author (non-PII).",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "scope": {
+          "type": "string",
+          "description": "Granularity of the shared snapshot.",
+          "enum": ["story", "chapter", "scene"]
+        },
+        "sourceStoryId": {
+          "type": "string",
+          "description": "ID of the source story.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "targetId": {
+          "type": "string",
+          "description": "Target chapter or turn ID when scope is chapter or scene.",
+          "maxLength": 128
+        },
+        "storyTitle": {
+          "type": "string",
+          "description": "Parent story title.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "workTitle": {
+          "type": "string",
+          "description": "Display title of the shared story, chapter, or scene.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "universe": {
+          "type": "string",
+          "description": "Fictional universe or canon.",
+          "maxLength": 200
+        },
+        "setting": {
+          "type": "string",
+          "description": "Setting and era.",
+          "maxLength": 400
+        },
+        "tone": {
+          "type": "string",
+          "description": "Narrative tone.",
+          "maxLength": 200
+        },
+        "premise": {
+          "type": "string",
+          "description": "Story opening premise.",
+          "maxLength": 4000
+        },
+        "summary": {
+          "type": "string",
+          "description": "Optional chapter summary or note.",
+          "maxLength": 1000
+        },
+        "turns": {
+          "type": "array",
+          "description": "Ordered turns included in the shared snapshot."
+        },
+        "chapters": {
+          "type": "array",
+          "description": "Chapter groupings included when sharing a story or chapter."
+        },
+        "characters": {
+          "type": "array",
+          "description": "Fictional cast profiles relevant to the shared work."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the share link was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the share snapshot was last updated."
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "authorName",
+        "scope",
+        "sourceStoryId",
+        "targetId",
+        "storyTitle",
+        "workTitle",
+        "universe",
+        "setting",
+        "tone",
+        "premise",
+        "summary",
+        "turns",
+        "chapters",
+        "characters",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StoryCollaboration": {
+      "title": "StoryCollaboration",
+      "description": "Real-time multi-user co-authoring room for an interactive story project (excludes private PII).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unguessable collaboration room identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the story creator who opened collaboration.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerName": {
+          "type": "string",
+          "description": "Public display name of the collaboration owner (non-PII).",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "sourceStoryId": {
+          "type": "string",
+          "description": "Source story ID owned by ownerUid.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Collaborative story title.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "universe": {
+          "type": "string",
+          "description": "Fictional universe or canon.",
+          "maxLength": 200
+        },
+        "setting": {
+          "type": "string",
+          "description": "Setting and era.",
+          "maxLength": 400
+        },
+        "tone": {
+          "type": "string",
+          "description": "Narrative tone.",
+          "maxLength": 200
+        },
+        "premise": {
+          "type": "string",
+          "description": "Opening premise.",
+          "maxLength": 4000
+        },
+        "protagonistId": {
+          "type": "string",
+          "description": "Protagonist character ID.",
+          "maxLength": 128
+        },
+        "turns": {
+          "type": "array",
+          "description": "Collaborative story scenes/turns."
+        },
+        "characters": {
+          "type": "array",
+          "description": "Collaborative cast profiles."
+        },
+        "crossIndex": {
+          "type": "array",
+          "description": "Collaborative Cross-Index continuity ledger."
+        },
+        "chapters": {
+          "type": "array",
+          "description": "Collaborative chapters."
+        },
+        "savePoints": {
+          "type": "array",
+          "description": "Collaborative checkpoints."
+        },
+        "lastEditedByUid": {
+          "type": "string",
+          "description": "UID of the collaborator who last saved an edit.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "lastEditedByName": {
+          "type": "string",
+          "description": "Display name of the collaborator who last saved an edit.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "clientUpdatedAt": {
+          "type": "number",
+          "description": "Client millisecond timestamp for last collaborative edit."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when collaboration room was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when collaboration room was last updated."
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "ownerName",
+        "sourceStoryId",
+        "title",
+        "universe",
+        "setting",
+        "tone",
+        "premise",
+        "protagonistId",
+        "turns",
+        "characters",
+        "crossIndex",
+        "chapters",
+        "savePoints",
+        "lastEditedByUid",
+        "lastEditedByName",
+        "clientUpdatedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CollaborationMember": {
+      "title": "CollaborationMember",
+      "description": "Membership ledger entry authorizing a verified collaborator to co-edit a StoryCollaboration room.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the collaborator.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name of the collaborator (non-PII).",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "role": {
+          "type": "string",
+          "description": "Member role within the collaboration room.",
+          "enum": ["owner", "editor"]
+        },
+        "joinedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when collaborator joined."
+        }
+      },
+      "required": ["uid", "displayName", "role", "joinedAt"]
+    },
+    "PublicStory": {
+      "title": "PublicStory",
+      "description": "Indexed story showcase document surfaced on the Landing Page Story Index when isPrivate is false, featuring AO3 taxonomy and atomic kudos/comment counters.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sourceStoryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "universe": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "setting": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "tone": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "premise": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "isPrivate": {
+          "type": "boolean",
+          "description": "Excludes private stories from unauthenticated reads and public index queries."
+        },
+        "tags": {
+          "type": "object",
+          "description": "AO3 taxonomy tags (rating, warnings, categories, fandoms, relationships, characters, freeforms)."
+        },
+        "turns": {
+          "type": "array"
+        },
+        "chapters": {
+          "type": "array"
+        },
+        "characters": {
+          "type": "array"
+        },
+        "wordCount": {
+          "type": "number"
+        },
+        "kudosCount": {
+          "type": "number"
+        },
+        "commentCount": {
+          "type": "number"
+        },
+        "lastKudoId": {
+          "type": "string",
+          "description": "Most recent anonymous kudo ID written atomically in a batch.",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "sourceStoryId",
+        "authorName",
+        "title",
+        "universe",
+        "setting",
+        "tone",
+        "premise",
+        "isPrivate",
+        "tags",
+        "turns",
+        "chapters",
+        "characters",
+        "wordCount",
+        "kudosCount",
+        "commentCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StoryKudo": {
+      "title": "StoryKudo",
+      "description": "Permanent single-per-user or anonymous reader kudos record attached to a public story.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "isAnonymous": {
+          "type": "boolean"
+        },
+        "storyIsPrivate": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "displayName", "isAnonymous", "storyIsPrivate", "createdAt"]
+    },
+    "StoryComment": {
+      "title": "StoryComment",
+      "description": "Hierarchical reader comment or threaded sub-comment anchored to a story, chapter, or scene.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "storyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "targetType": {
+          "type": "string",
+          "enum": ["story", "chapter", "scene"]
+        },
+        "targetId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "targetLabel": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "chapterOrSceneLabel": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "parentCommentId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "storyIsPrivate": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "storyId",
+        "authorUid",
+        "authorName",
+        "body",
+        "targetType",
+        "targetId",
+        "storyIsPrivate",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserCollection": {
+      "title": "UserCollection",
+      "description": "User-curated named collection of story bookmarks.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "isPrivate": { "type": "boolean" },
+        "storyIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "name", "description", "isPrivate", "storyIds", "createdAt", "updatedAt"]
+    },
+    "StorySubscription": {
+      "title": "StorySubscription",
+      "description": "Individual user subscription tracking updates on a public story.",
+      "type": "object",
+      "properties": {
+        "storyId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "storyTitle": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "authorName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "lastSeenTurnCount": { "type": "number" },
+        "lastSeenChapterCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["storyId", "ownerUid", "storyTitle", "authorName", "lastSeenTurnCount", "lastSeenChapterCount", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -193,6 +767,54 @@
         "$ref": "#/entities/UserStory"
       },
       "description": "User-owned interactive story manuscripts synced across devices without oversized binary image payloads."
+    },
+    "/users/{userId}/collections/{collectionId}": {
+      "schema": {
+        "$ref": "#/entities/UserCollection"
+      },
+      "description": "Per-user curated collections referencing story IDs."
+    },
+    "/users/{userId}/subscriptions/{storyId}": {
+      "schema": {
+        "$ref": "#/entities/StorySubscription"
+      },
+      "description": "Per-user story subscriptions tracking read/seen story progress."
+    },
+    "/sharedWorks/{shareId}": {
+      "schema": {
+        "$ref": "#/entities/SharedWork"
+      },
+      "description": "Publicly readable by exact shareId snapshot documents for shared full stories, chapters, or scenes."
+    },
+    "/collaborations/{collabId}": {
+      "schema": {
+        "$ref": "#/entities/StoryCollaboration"
+      },
+      "description": "Live multi-user co-authoring manuscripts keyed by unguessable collabId."
+    },
+    "/collaborations/{collabId}/members/{memberUid}": {
+      "schema": {
+        "$ref": "#/entities/CollaborationMember"
+      },
+      "description": "Authorized collaborator membership subcollection enforcing synchronous access control and revocation."
+    },
+    "/publicStories/{publicId}": {
+      "schema": {
+        "$ref": "#/entities/PublicStory"
+      },
+      "description": "Publicly indexed works surfaced on the Landing Page Story Index (where isPrivate == false) with AO3 taxonomy and atomic kudos/comment counters."
+    },
+    "/publicStories/{publicId}/kudos/{kudoId}": {
+      "schema": {
+        "$ref": "#/entities/StoryKudo"
+      },
+      "description": "One-per-user or anonymous reader kudos subcollection enforcing duplicate kudos prevention and atomic count updates."
+    },
+    "/publicStories/{publicId}/comments/{commentId}": {
+      "schema": {
+        "$ref": "#/entities/StoryComment"
+      },
+      "description": "Hierarchical reader comments subcollection anchored to story, chapter, or scene scopes."
     }
   }
 }

@@ -1,17 +1,26 @@
 import React from 'react';
-import { LogIn, User as UserIcon } from 'lucide-react';
+import { LogIn, Settings, User as UserIcon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
-export type WorkspaceTab = 'story' | 'chapters' | 'characters' | 'cross-index' | 'save-points';
+export type WorkspaceTab =
+  | 'discover'
+  | 'story'
+  | 'chapters'
+  | 'characters'
+  | 'cross-index'
+  | 'save-points';
 
 interface TopNavProps {
   activeTab: WorkspaceTab;
   onSelectTab: (tab: WorkspaceTab) => void;
   onOpenNewStory: () => void;
+  onOpenStudioSettings: () => void;
   onOpenAccountSettings: () => void;
+  accountUsername?: string;
 }
 
 const NAV_ITEMS: Array<{ id: WorkspaceTab; label: string }> = [
+  { id: 'discover', label: 'Discover' },
   { id: 'story', label: 'Story' },
   { id: 'chapters', label: 'Chapters' },
   { id: 'characters', label: 'Characters' },
@@ -23,9 +32,17 @@ export const TopNav: React.FC<TopNavProps> = ({
   activeTab,
   onSelectTab,
   onOpenNewStory,
+  onOpenStudioSettings,
   onOpenAccountSettings,
+  accountUsername,
 }) => {
   const { user } = useAuth();
+
+  const accountTooltip = user
+    ? `Account (${accountUsername || user.displayName || 'Signed in'})`
+    : accountUsername
+      ? `Account (${accountUsername})`
+      : 'Account & Sign In';
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-sm border-b border-neutral-200">
@@ -33,7 +50,7 @@ export const TopNav: React.FC<TopNavProps> = ({
         {/* Zone 1: Single text element wordmark */}
         <button
           type="button"
-          onClick={() => onSelectTab('story')}
+          onClick={() => onSelectTab('discover')}
           className="font-editorial text-xl font-semibold tracking-tight text-[#111827] whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1D4ED8] rounded-sm"
         >
           Folio &amp; Canon
@@ -69,26 +86,29 @@ export const TopNav: React.FC<TopNavProps> = ({
           })}
         </nav>
 
-        {/* Zone 3: Account Settings & New Story */}
+        {/* Zone 3: Studio Settings Gear, Icon-only Account Button & New Story */}
         <div className="flex items-center gap-2.5 shrink-0">
           <button
             type="button"
+            onClick={onOpenStudioSettings}
+            aria-label="Studio settings"
+            title="Studio settings"
+            className="p-2 text-[#4B5563] hover:text-[#111827] bg-white hover:bg-neutral-50 border border-neutral-300 rounded-lg transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1D4ED8]"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
             onClick={onOpenAccountSettings}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-[#111827] bg-white hover:bg-neutral-50 border border-neutral-300 rounded-lg transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1D4ED8]"
+            aria-label={accountTooltip}
+            title={accountTooltip}
+            data-testid="account-icon-btn"
+            className="p-2 text-[#4B5563] hover:text-[#111827] bg-white hover:bg-neutral-50 border border-neutral-300 rounded-lg transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1D4ED8] cursor-pointer"
           >
             {user ? (
-              <>
-                <UserIcon className="w-4 h-4 text-[#1D4ED8]" />
-                <span className="max-w-[120px] truncate hidden sm:inline">
-                  {user.displayName?.split(' ')[0] || 'Account'}
-                </span>
-                <span className="sm:hidden">Account</span>
-              </>
+              <UserIcon className="w-4 h-4 text-[#1D4ED8]" />
             ) : (
-              <>
-                <LogIn className="w-4 h-4 text-[#1D4ED8]" />
-                <span>Sign In</span>
-              </>
+              <LogIn className="w-4 h-4 text-[#1D4ED8]" />
             )}
           </button>
           <button

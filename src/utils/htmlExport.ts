@@ -543,3 +543,31 @@ export function downloadChapterHtml(project: StoryProject, chapter: StoryChapter
   return filename;
 }
 
+export function downloadStoryHtml(
+  project: StoryProject,
+  options: Partial<HtmlExportOptions> = {},
+): string {
+  const resolved: HtmlExportOptions = {
+    includePrompts: options.includePrompts ?? true,
+    includeChoices: options.includeChoices ?? true,
+    includeContinuityNotes: options.includeContinuityNotes ?? false,
+    includeCastAndLore: options.includeCastAndLore ?? true,
+    chapterId: options.chapterId,
+    turnId: options.turnId,
+  };
+  const html = generateStoryHtml(project, resolved);
+  const slug = slugifyTitle(project.title) || 'story';
+  const filename = `${slug}.html`;
+  downloadHtmlFile(filename, html);
+  return filename;
+}
+
+export function downloadStoryArchiveJson(project: StoryProject): string {
+  const payload = JSON.stringify(project, null, 2);
+  const slug = slugifyTitle(project.title) || 'story';
+  const filename = `${slug}-archive.json`;
+  saveTextFile(filename, payload, 'application/json;charset=utf-8');
+  return filename;
+}
+
+

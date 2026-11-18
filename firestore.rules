@@ -42,11 +42,13 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'uid',
           'displayName',
+          'username',
           'email',
           'photoURL',
           'preferredModel',
           'thinkingLevel',
           'preferredVoice',
+          'autoPlayNarration',
           'allowedModels',
           'activeStoryId',
           'createdAt',
@@ -57,6 +59,7 @@ service cloud.firestore {
         && data.uid == userId
         && data.displayName is string
         && data.displayName.size() <= 120
+        && (!('username' in data) || (data.username is string && data.username.size() >= 1 && data.username.size() <= 40))
         && data.email is string
         && data.email.size() <= 254
         && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500))
@@ -65,6 +68,7 @@ service cloud.firestore {
         && data.preferredModel.size() <= 100
         && data.thinkingLevel in ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH', 'XHIGH']
         && data.preferredVoice in ['Kore', 'Charon', 'Fenrir', 'Puck', 'Zephyr']
+        && (!('autoPlayNarration' in data) || data.autoPlayNarration is bool)
         && data.allowedModels is list
         && data.allowedModels.size() <= 20
         && (data.allowedModels.size() == 0 || data.allowedModels[0] is string)
@@ -106,6 +110,11 @@ service cloud.firestore {
           'crossIndex',
           'chapters',
           'savePoints',
+          'shareId',
+          'collabId',
+          'publicStoryId',
+          'isPrivate',
+          'tags',
           'clientUpdatedAt',
           'createdAt',
           'updatedAt'
@@ -143,9 +152,447 @@ service cloud.firestore {
         && data.savePoints is list
         && data.savePoints.size() <= 50
         && (data.savePoints.size() == 0 || data.savePoints[0] is map)
+        && (!('shareId' in data) || isValidId(data.shareId))
+        && (!('collabId' in data) || isValidId(data.collabId))
+        && (!('publicStoryId' in data) || isValidId(data.publicStoryId))
+        && (!('isPrivate' in data) || data.isPrivate is bool)
+        && (!('tags' in data) || isValidAo3Tags(data.tags))
         && data.clientUpdatedAt is number
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
+    }
+
+    function isValidAo3Tags(tags) {
+      return tags is map
+        && tags.keys().hasAll([
+          'rating',
+          'warnings',
+          'categories',
+          'fandoms',
+          'relationships',
+          'characters',
+          'freeforms'
+        ])
+        && tags.keys().hasOnly([
+          'rating',
+          'warnings',
+          'categories',
+          'fandoms',
+          'relationships',
+          'characters',
+          'freeforms'
+        ])
+        && tags.rating in [
+          'General Audiences',
+          'Teen And Up Audiences',
+          'Mature',
+          'Explicit',
+          'Not Rated'
+        ]
+        && tags.warnings is list
+        && tags.warnings.size() <= 6
+        && (tags.warnings.size() == 0 || tags.warnings[0] is string)
+        && tags.categories is list
+        && tags.categories.size() <= 6
+        && (tags.categories.size() == 0 || tags.categories[0] is string)
+        && tags.fandoms is list
+        && tags.fandoms.size() <= 10
+        && (tags.fandoms.size() == 0 || tags.fandoms[0] is string)
+        && tags.relationships is list
+        && tags.relationships.size() <= 20
+        && (tags.relationships.size() == 0 || tags.relationships[0] is string)
+        && tags.characters is list
+        && tags.characters.size() <= 30
+        && (tags.characters.size() == 0 || tags.characters[0] is string)
+        && tags.freeforms is list
+        && tags.freeforms.size() <= 40
+        && (tags.freeforms.size() == 0 || tags.freeforms[0] is string);
+    }
+
+    function isValidPublicStory(data, publicId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'sourceStoryId',
+          'authorName',
+          'title',
+          'universe',
+          'setting',
+          'tone',
+          'premise',
+          'isPrivate',
+          'tags',
+          'turns',
+          'chapters',
+          'characters',
+          'wordCount',
+          'kudosCount',
+          'commentCount',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'sourceStoryId',
+          'authorName',
+          'title',
+          'universe',
+          'setting',
+          'tone',
+          'premise',
+          'isPrivate',
+          'tags',
+          'turns',
+          'chapters',
+          'characters',
+          'wordCount',
+          'kudosCount',
+          'commentCount',
+          'lastKudoId',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == publicId
+        && isValidId(data.ownerUid)
+        && isValidId(data.sourceStoryId)
+        && data.authorName is string
+        && data.authorName.size() >= 1
+        && data.authorName.size() <= 120
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 200
+        && data.universe is string
+        && data.universe.size() <= 200
+        && data.setting is string
+        && data.setting.size() <= 400
+        && data.tone is string
+        && data.tone.size() <= 200
+        && data.premise is string
+        && data.premise.size() <= 4000
+        && data.isPrivate is bool
+        && isValidAo3Tags(data.tags)
+        && data.turns is list
+        && data.turns.size() >= 1
+        && data.turns.size() <= 200
+        && data.turns[0] is map
+        && data.chapters is list
+        && data.chapters.size() <= 100
+        && (data.chapters.size() == 0 || data.chapters[0] is map)
+        && data.characters is list
+        && data.characters.size() <= 100
+        && (data.characters.size() == 0 || data.characters[0] is map)
+        && data.wordCount is int
+        && data.wordCount >= 0
+        && data.kudosCount is int
+        && data.kudosCount >= 0
+        && data.commentCount is int
+        && data.commentCount >= 0
+        && (!('lastKudoId' in data) || isValidId(data.lastKudoId))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isAnonKudoToken(id) {
+      return id is string && id.size() >= 13 && id.size() <= 80 && id.matches('^anon_[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidStoryKudo(data, kudoId) {
+      return data.keys().hasAll(['uid', 'displayName', 'isAnonymous', 'storyIsPrivate', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'isAnonymous', 'storyIsPrivate', 'createdAt'])
+        && isValidId(data.uid)
+        && data.uid == kudoId
+        && data.isAnonymous is bool
+        && (
+          (isOwner(kudoId)) ||
+          (isAnonKudoToken(kudoId) && data.isAnonymous == true)
+        )
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 120
+        && data.storyIsPrivate is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidStoryComment(data, publicId, commentId) {
+      return data.keys().hasAll([
+          'id',
+          'storyId',
+          'authorUid',
+          'authorName',
+          'body',
+          'targetType',
+          'targetId',
+          'storyIsPrivate',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'storyId',
+          'authorUid',
+          'authorName',
+          'body',
+          'targetType',
+          'targetId',
+          'targetLabel',
+          'chapterOrSceneLabel',
+          'parentCommentId',
+          'storyIsPrivate',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == commentId
+        && isValidId(data.storyId)
+        && data.storyId == publicId
+        && isValidId(data.authorUid)
+        && data.authorName is string
+        && data.authorName.size() >= 1
+        && data.authorName.size() <= 120
+        && data.body is string
+        && data.body.size() >= 1
+        && data.body.size() <= 4000
+        && data.targetType in ['story', 'chapter', 'scene']
+        && data.targetId is string
+        && data.targetId.size() >= 1
+        && data.targetId.size() <= 128
+        && (!('targetLabel' in data) || (data.targetLabel is string && data.targetLabel.size() <= 160))
+        && (!('chapterOrSceneLabel' in data) || (data.chapterOrSceneLabel is string && data.chapterOrSceneLabel.size() <= 160))
+        && (!('parentCommentId' in data) || isValidId(data.parentCommentId))
+        && data.storyIsPrivate is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserCollection(data, userId, collectionId) {
+      return data.keys().hasAll(['id', 'ownerUid', 'name', 'description', 'isPrivate', 'storyIds', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'name', 'description', 'isPrivate', 'storyIds', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.id == collectionId
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && data.ownerUid == userId
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 100
+        && data.description is string
+        && data.description.size() <= 500
+        && data.isPrivate is bool
+        && data.storyIds is list
+        && data.storyIds.size() <= 200
+        && (data.storyIds.size() == 0 || data.storyIds[0] is string)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStorySubscription(data, userId, storyId) {
+      return data.keys().hasAll(['storyId', 'ownerUid', 'storyTitle', 'authorName', 'lastSeenTurnCount', 'lastSeenChapterCount', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['storyId', 'ownerUid', 'storyTitle', 'authorName', 'lastSeenTurnCount', 'lastSeenChapterCount', 'createdAt', 'updatedAt'])
+        && isValidId(data.storyId)
+        && data.storyId == storyId
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && data.ownerUid == userId
+        && data.storyTitle is string
+        && data.storyTitle.size() >= 1
+        && data.storyTitle.size() <= 200
+        && data.authorName is string
+        && data.authorName.size() >= 1
+        && data.authorName.size() <= 120
+        && data.lastSeenTurnCount is int
+        && data.lastSeenTurnCount >= 0
+        && data.lastSeenChapterCount is int
+        && data.lastSeenChapterCount >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSharedWork(data, shareId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'authorName',
+          'scope',
+          'sourceStoryId',
+          'targetId',
+          'storyTitle',
+          'workTitle',
+          'universe',
+          'setting',
+          'tone',
+          'premise',
+          'summary',
+          'turns',
+          'chapters',
+          'characters',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'authorName',
+          'scope',
+          'sourceStoryId',
+          'targetId',
+          'storyTitle',
+          'workTitle',
+          'universe',
+          'setting',
+          'tone',
+          'premise',
+          'summary',
+          'turns',
+          'chapters',
+          'characters',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == shareId
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && data.authorName is string
+        && data.authorName.size() >= 1
+        && data.authorName.size() <= 120
+        && data.scope in ['story', 'chapter', 'scene']
+        && isValidId(data.sourceStoryId)
+        && data.targetId is string
+        && data.targetId.size() <= 128
+        && data.storyTitle is string
+        && data.storyTitle.size() >= 1
+        && data.storyTitle.size() <= 200
+        && data.workTitle is string
+        && data.workTitle.size() >= 1
+        && data.workTitle.size() <= 200
+        && data.universe is string
+        && data.universe.size() <= 200
+        && data.setting is string
+        && data.setting.size() <= 400
+        && data.tone is string
+        && data.tone.size() <= 200
+        && data.premise is string
+        && data.premise.size() <= 4000
+        && data.summary is string
+        && data.summary.size() <= 1000
+        && data.turns is list
+        && data.turns.size() >= 1
+        && data.turns.size() <= 200
+        && data.turns[0] is map
+        && data.chapters is list
+        && data.chapters.size() <= 100
+        && (data.chapters.size() == 0 || data.chapters[0] is map)
+        && data.characters is list
+        && data.characters.size() <= 100
+        && (data.characters.size() == 0 || data.characters[0] is map)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCollaboration(data, collabId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerUid',
+          'ownerName',
+          'sourceStoryId',
+          'title',
+          'universe',
+          'setting',
+          'tone',
+          'premise',
+          'protagonistId',
+          'turns',
+          'characters',
+          'crossIndex',
+          'chapters',
+          'savePoints',
+          'lastEditedByUid',
+          'lastEditedByName',
+          'clientUpdatedAt',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'ownerUid',
+          'ownerName',
+          'sourceStoryId',
+          'title',
+          'universe',
+          'setting',
+          'tone',
+          'premise',
+          'protagonistId',
+          'turns',
+          'characters',
+          'crossIndex',
+          'chapters',
+          'savePoints',
+          'lastEditedByUid',
+          'lastEditedByName',
+          'clientUpdatedAt',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == collabId
+        && isValidId(data.ownerUid)
+        && data.ownerName is string
+        && data.ownerName.size() >= 1
+        && data.ownerName.size() <= 120
+        && isValidId(data.sourceStoryId)
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 200
+        && data.universe is string
+        && data.universe.size() <= 200
+        && data.setting is string
+        && data.setting.size() <= 400
+        && data.tone is string
+        && data.tone.size() <= 200
+        && data.premise is string
+        && data.premise.size() <= 4000
+        && data.protagonistId is string
+        && data.protagonistId.size() <= 128
+        && data.turns is list
+        && data.turns.size() >= 1
+        && data.turns.size() <= 200
+        && data.turns[0] is map
+        && data.characters is list
+        && data.characters.size() <= 100
+        && (data.characters.size() == 0 || data.characters[0] is map)
+        && data.crossIndex is list
+        && data.crossIndex.size() <= 300
+        && (data.crossIndex.size() == 0 || data.crossIndex[0] is map)
+        && data.chapters is list
+        && data.chapters.size() <= 100
+        && (data.chapters.size() == 0 || data.chapters[0] is map)
+        && data.savePoints is list
+        && data.savePoints.size() <= 50
+        && (data.savePoints.size() == 0 || data.savePoints[0] is map)
+        && isValidId(data.lastEditedByUid)
+        && data.lastEditedByUid == request.auth.uid
+        && data.lastEditedByName is string
+        && data.lastEditedByName.size() >= 1
+        && data.lastEditedByName.size() <= 120
+        && data.clientUpdatedAt is number
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCollaborationMember(data, memberUid) {
+      return data.keys().hasAll(['uid', 'displayName', 'role', 'joinedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'role', 'joinedAt'])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.uid == memberUid
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 120
+        && data.role in ['owner', 'editor']
+        && data.joinedAt is timestamp;
     }
 
     match /users/{userId} {
@@ -164,11 +611,13 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'displayName',
+          'username',
           'email',
           'photoURL',
           'preferredModel',
           'thinkingLevel',
           'preferredVoice',
+          'autoPlayNarration',
           'allowedModels',
           'activeStoryId',
           'updatedAt'
@@ -179,7 +628,7 @@ service cloud.firestore {
         allow get: if isValidId(userId)
           && isValidId(storyId)
           && isOwner(userId)
-          && existing().ownerUid == request.auth.uid;
+          && (resource == null || existing().ownerUid == request.auth.uid);
         allow list: if isOwner(userId)
           && existing().ownerUid == request.auth.uid;
         allow create: if isValidId(userId)
@@ -209,6 +658,11 @@ service cloud.firestore {
             'crossIndex',
             'chapters',
             'savePoints',
+            'shareId',
+            'collabId',
+            'publicStoryId',
+            'isPrivate',
+            'tags',
             'clientUpdatedAt',
             'updatedAt'
           ])
@@ -217,6 +671,322 @@ service cloud.firestore {
           && isValidId(storyId)
           && isOwner(userId)
           && existing().ownerUid == request.auth.uid;
+      }
+
+      match /collections/{collectionId} {
+        allow get: if isValidId(userId) && isValidId(collectionId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerUid == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(collectionId)
+          && isOwner(userId)
+          && isValidUserCollection(incoming(), userId, collectionId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow update: if isValidId(userId)
+          && isValidId(collectionId)
+          && isOwner(userId)
+          && isValidUserCollection(incoming(), userId, collectionId)
+          && incoming().id == existing().id
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'isPrivate', 'storyIds', 'updatedAt'])
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow delete: if isValidId(userId)
+          && isValidId(collectionId)
+          && isOwner(userId)
+          && existing().ownerUid == request.auth.uid;
+      }
+
+      match /subscriptions/{storyId} {
+        allow get: if isValidId(userId) && isValidId(storyId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerUid == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(storyId)
+          && isOwner(userId)
+          && isValidStorySubscription(incoming(), userId, storyId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow update: if isValidId(userId)
+          && isValidId(storyId)
+          && isOwner(userId)
+          && isValidStorySubscription(incoming(), userId, storyId)
+          && incoming().storyId == existing().storyId
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['storyTitle', 'authorName', 'lastSeenTurnCount', 'lastSeenChapterCount', 'updatedAt'])
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow delete: if isValidId(userId)
+          && isValidId(storyId)
+          && isOwner(userId)
+          && existing().ownerUid == request.auth.uid;
+      }
+    }
+
+    match /sharedWorks/{shareId} {
+      allow get: if isValidId(shareId);
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(shareId)
+        && isSignedIn()
+        && isValidSharedWork(incoming(), shareId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      allow update: if isValidId(shareId)
+        && isSignedIn()
+        && isValidSharedWork(incoming(), shareId)
+        && existing().ownerUid == request.auth.uid
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().scope == existing().scope
+        && incoming().sourceStoryId == existing().sourceStoryId
+        && incoming().targetId == existing().targetId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'authorName',
+          'storyTitle',
+          'workTitle',
+          'universe',
+          'setting',
+          'tone',
+          'premise',
+          'summary',
+          'turns',
+          'chapters',
+          'characters',
+          'updatedAt'
+        ])
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      allow delete: if isValidId(shareId)
+        && isSignedIn()
+        && existing().ownerUid == request.auth.uid;
+    }
+
+    match /collaborations/{collabId} {
+      allow get: if isValidId(collabId) && isSignedIn();
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(collabId)
+        && isSignedIn()
+        && isValidCollaboration(incoming(), collabId)
+        && incoming().ownerUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      allow update: if isValidId(collabId)
+        && isSignedIn()
+        && isValidCollaboration(incoming(), collabId)
+        && (
+          existing().ownerUid == request.auth.uid ||
+          exists(/databases/$(database)/documents/collaborations/$(collabId)/members/$(request.auth.uid))
+        )
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().sourceStoryId == existing().sourceStoryId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'ownerName',
+          'title',
+          'universe',
+          'setting',
+          'tone',
+          'premise',
+          'protagonistId',
+          'turns',
+          'characters',
+          'crossIndex',
+          'chapters',
+          'savePoints',
+          'lastEditedByUid',
+          'lastEditedByName',
+          'clientUpdatedAt',
+          'updatedAt'
+        ])
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      allow delete: if isValidId(collabId)
+        && isSignedIn()
+        && existing().ownerUid == request.auth.uid;
+
+      match /members/{memberUid} {
+        allow get: if isValidId(collabId)
+          && isValidId(memberUid)
+          && isSignedIn()
+          && (
+            request.auth.uid == memberUid ||
+            get(/databases/$(database)/documents/collaborations/$(collabId)).data.ownerUid == request.auth.uid
+          );
+        allow list: if false;
+        allow create: if isValidId(collabId)
+          && isValidId(memberUid)
+          && isOwner(memberUid)
+          && isValidCollaborationMember(incoming(), memberUid)
+          && incoming().joinedAt == request.time
+          && exists(/databases/$(database)/documents/collaborations/$(collabId))
+          && (
+            incoming().role == 'editor' ||
+            (
+              incoming().role == 'owner' &&
+              get(/databases/$(database)/documents/collaborations/$(collabId)).data.ownerUid == request.auth.uid
+            )
+          );
+        allow update: if false;
+        allow delete: if isValidId(collabId)
+          && isValidId(memberUid)
+          && isSignedIn()
+          && (
+            request.auth.uid == memberUid ||
+            get(/databases/$(database)/documents/collaborations/$(collabId)).data.ownerUid == request.auth.uid
+          );
+      }
+    }
+
+    match /publicStories/{publicId} {
+      allow get: if isValidId(publicId)
+        && (
+          existing().isPrivate == false ||
+          (isSignedIn() && existing().ownerUid == request.auth.uid)
+        );
+      allow list: if existing().isPrivate == false
+        || (isSignedIn() && existing().ownerUid == request.auth.uid);
+      allow create: if isValidId(publicId)
+        && isSignedIn()
+        && isValidPublicStory(incoming(), publicId)
+        && incoming().ownerUid == request.auth.uid
+        && incoming().kudosCount == 0
+        && incoming().commentCount == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      allow update: if isValidId(publicId)
+        && (
+          (
+            isSignedIn()
+            && existing().ownerUid == request.auth.uid
+            && isValidPublicStory(incoming(), publicId)
+            && incoming().id == existing().id
+            && incoming().ownerUid == existing().ownerUid
+            && incoming().sourceStoryId == existing().sourceStoryId
+            && incoming().kudosCount == existing().kudosCount
+            && incoming().commentCount == existing().commentCount
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'authorName',
+              'title',
+              'universe',
+              'setting',
+              'tone',
+              'premise',
+              'isPrivate',
+              'tags',
+              'turns',
+              'chapters',
+              'characters',
+              'wordCount',
+              'updatedAt'
+            ])
+            && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          )
+          ||
+          (
+            isSignedIn()
+            && existing().isPrivate == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['kudosCount'])
+            && incoming().kudosCount is int
+            && incoming().kudosCount == existing().kudosCount + 1
+            && !exists(/databases/$(database)/documents/publicStories/$(publicId)/kudos/$(request.auth.uid))
+            && existsAfter(/databases/$(database)/documents/publicStories/$(publicId)/kudos/$(request.auth.uid))
+          )
+          ||
+          (
+            existing().isPrivate == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['kudosCount', 'lastKudoId'])
+            && incoming().kudosCount is int
+            && incoming().kudosCount == existing().kudosCount + 1
+            && isAnonKudoToken(incoming().lastKudoId)
+            && !exists(/databases/$(database)/documents/publicStories/$(publicId)/kudos/$(incoming().lastKudoId))
+            && existsAfter(/databases/$(database)/documents/publicStories/$(publicId)/kudos/$(incoming().lastKudoId))
+          )
+          ||
+          (
+            isSignedIn()
+            && existing().isPrivate == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['commentCount'])
+            && incoming().commentCount is int
+            && (
+              incoming().commentCount == existing().commentCount + 1 ||
+              (existing().commentCount > 0 && incoming().commentCount == existing().commentCount - 1)
+            )
+          )
+        );
+      allow delete: if isValidId(publicId)
+        && isSignedIn()
+        && existing().ownerUid == request.auth.uid;
+
+      match /kudos/{kudoId} {
+        allow get: if isValidId(publicId)
+          && isValidId(kudoId)
+          && (existing().storyIsPrivate == false || isOwner(kudoId));
+        allow list: if existing().storyIsPrivate == false
+          || (isSignedIn() && existing().uid == request.auth.uid);
+        allow create: if isValidId(publicId)
+          && isValidId(kudoId)
+          && isValidStoryKudo(incoming(), kudoId)
+          && (
+            (isOwner(kudoId) && exists(/databases/$(database)/documents/users/$(request.auth.uid))) ||
+            isAnonKudoToken(kudoId)
+          )
+          && incoming().storyIsPrivate == false
+          && incoming().createdAt == request.time
+          && get(/databases/$(database)/documents/publicStories/$(publicId)).data.isPrivate == false
+          && getAfter(/databases/$(database)/documents/publicStories/$(publicId)).data.kudosCount == get(/databases/$(database)/documents/publicStories/$(publicId)).data.kudosCount + 1;
+        allow update: if false;
+        allow delete: if false;
+      }
+
+      match /comments/{commentId} {
+        allow get: if isValidId(publicId)
+          && isValidId(commentId)
+          && (
+            existing().storyIsPrivate == false ||
+            (isSignedIn() && existing().authorUid == request.auth.uid)
+          );
+        allow list: if existing().storyIsPrivate == false
+          || (isSignedIn() && existing().authorUid == request.auth.uid);
+        allow create: if isValidId(publicId)
+          && isValidId(commentId)
+          && isSignedIn()
+          && isValidStoryComment(incoming(), publicId, commentId)
+          && incoming().authorUid == request.auth.uid
+          && incoming().storyIsPrivate == false
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && get(/databases/$(database)/documents/publicStories/$(publicId)).data.isPrivate == false
+          && getAfter(/databases/$(database)/documents/publicStories/$(publicId)).data.commentCount == get(/databases/$(database)/documents/publicStories/$(publicId)).data.commentCount + 1
+          && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+        allow update: if isValidId(publicId)
+          && isValidId(commentId)
+          && isSignedIn()
+          && existing().authorUid == request.auth.uid
+          && isValidStoryComment(incoming(), publicId, commentId)
+          && incoming().id == existing().id
+          && incoming().storyId == existing().storyId
+          && incoming().authorUid == existing().authorUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['body', 'updatedAt']);
+        allow delete: if isValidId(publicId)
+          && isValidId(commentId)
+          && isSignedIn()
+          && (
+            existing().authorUid == request.auth.uid ||
+            get(/databases/$(database)/documents/publicStories/$(publicId)).data.ownerUid == request.auth.uid
+          )
+          && getAfter(/databases/$(database)/documents/publicStories/$(publicId)).data.commentCount == get(/databases/$(database)/documents/publicStories/$(publicId)).data.commentCount - 1;
       }
     }
   }

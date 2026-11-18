@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { Check, Copy, Save, X } from 'lucide-react';
+import { Check, Copy, Download, FileText, Loader2, X } from 'lucide-react';
 import { StoryProject } from '../types/story';
 import { downloadHtmlFile, generateStoryHtml, HtmlExportOptions } from '../utils/htmlExport';
+import { exportStoryToPdf } from '../utils/pdfExport';
 
 interface HtmlExportModalProps {
   isOpen: boolean;
@@ -24,12 +25,14 @@ export const HtmlExportModal: React.FC<HtmlExportModalProps> = ({
   const [previewMode, setPreviewMode] = useState<'rendered' | 'source'>('rendered');
   const [copied, setCopied] = useState(false);
   const [savedToast, setSavedToast] = useState<string | null>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   React.useEffect(() => {
     if (isOpen) {
       setSelectedChapterId(initialChapterId ?? '');
       setCopied(false);
       setSavedToast(null);
+      setIsGeneratingPdf(false);
     }
   }, [isOpen, initialChapterId]);
 
@@ -64,12 +67,31 @@ export const HtmlExportModal: React.FC<HtmlExportModalProps> = ({
         chapters.find((c) => c.id === selectedChapterId)?.chapterNumber ?? 'part'
       }`
     : '';
-  const filename = `${slug || 'story'}${chapterSuffix}.html`;
+  const baseFilename = `${slug || 'story'}${chapterSuffix}`;
+  const filename = `${baseFilename}.html`;
 
   const handleSaveAsFile = () => {
     downloadHtmlFile(filename, htmlOutput);
     setSavedToast(`Saved ${filename}`);
     setTimeout(() => setSavedToast(null), 3000);
+  };
+
+  const handleDownloadPdf = async () => {
+    if (isGeneratingPdf) return;
+    setIsGeneratingPdf(true);
+    try {
+      const pdfName = await exportStoryToPdf(project, {
+        includePrompts,
+        includeChoices,
+        includeContinuityNotes,
+        includeCastAndLore,
+        chapterId: selectedChapterId || undefined,
+      });
+      setSavedToast(`Saved ${pdfName}`);
+      setTimeout(() => setSavedToast(null), 3000);
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   const handleCopy = async () => {
@@ -97,10 +119,10 @@ export const HtmlExportModal: React.FC<HtmlExportModalProps> = ({
               id="html-export-heading"
               className="font-editorial text-xl font-semibold text-[#111827]"
             >
-              Export Story as HTML
+              Export Manuscript
             </h2>
             <p className="text-xs text-[#6B7280] mt-0.5">
-              Preview your manuscript with merged chapters and prompts, then save it as an HTML file.
+              Preview your manuscript with merged chapters and prompts, then download as PDF or HTML.
             </p>
           </div>
           <button
@@ -265,7 +287,7 @@ export const HtmlExportModal: React.FC<HtmlExportModalProps> = ({
             {savedToast ? (
               <span className="text-[#15803D] font-sans font-medium">{savedToast}</span>
             ) : (
-              <span>File: {filename}</span>
+              <span>Output: {baseFilename}.html / .pdf</span>
             )}
           </div>
 
@@ -273,7 +295,7 @@ export const HtmlExportModal: React.FC<HtmlExportModalProps> = ({
             <button
               type="button"
               onClick={handleCopy}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap"
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
             >
               {copied ? (
                 <>
@@ -290,10 +312,28 @@ export const HtmlExportModal: React.FC<HtmlExportModalProps> = ({
             <button
               type="button"
               onClick={handleSaveAsFile}
-              className="inline-flex items-center justify-center gap-2 px-5 py-2 text-sm font-medium text-white bg-[#1D4ED8] hover:bg-[#1E40AF] rounded-lg transition-colors whitespace-nowrap"
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
             >
-              <Save className="w-4 h-4" />
-              Save as File
+              <Download className="w-4 h-4 text-[#4B5563]" />
+              Download HTML
+            </button>
+            <button
+              type="button"
+              disabled={isGeneratingPdf}
+              onClick={() => void handleDownloadPdf()}
+              className="inline-flex items-center justify-center gap-2 px-5 py-2 text-sm font-medium text-white bg-[#1D4ED8] hover:bg-[#1E40AF] disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap shrink-0"
+            >
+              {isGeneratingPdf ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Generating PDF...
+                </>
+              ) : (
+                <>
+                  <FileText className="w-4 h-4" />
+                  Download PDF
+                </>
+              )}
             </button>
           </div>
         </div>

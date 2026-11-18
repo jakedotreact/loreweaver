@@ -2,14 +2,18 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
-  Bookmark,
-  BookOpen,
+  Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
   Download,
+  Eye,
+  EyeOff,
+  FileText,
   Flag,
   GitBranch,
   ImagePlus,
-  Library,
   Loader2,
   Pause,
   Pencil,
@@ -17,19 +21,33 @@ import {
   RotateCcw,
   Save,
   Send,
-  ShieldCheck,
+  Share2,
+  Tag,
+  Users,
   Volume2,
 } from 'lucide-react';
 import { NarrativeSpeechControls } from '../hooks/useNarrativeSpeech';
 import {
+  CommentTargetType,
   CrossIndexEntry,
   ModelConfig,
   StoryChoice,
+  StoryComment,
+  StoryDisplayMode,
   StoryIllustration,
   StoryProject,
   StoryTurn,
+  UserCollection,
 } from '../types/story';
 import { downloadSceneHtml } from '../utils/htmlExport';
+import { downloadScenePdf } from '../utils/pdfExport';
+import { buildCollabUrl, buildShareUrl } from '../utils/storyLinks';
+import {
+  extractCharacterNames,
+  extractHighlightTerms,
+  matchStoryTurns,
+} from '../utils/turnSearch';
+import { CommentAddPayload, CommentsSection } from './CommentsSection';
 import { DictaquillButton } from './DictaquillButton';
 import { IllustrationFigure } from './IllustrationFigure';
 import { IllustrationModal, IllustrationTarget } from './IllustrationModal';
@@ -37,8 +55,36 @@ import { ItemLoreModal, LoreTarget } from './ItemLoreModal';
 import { ModelConfigPanel } from './ModelConfigPanel';
 import { RewriteCorrectionPayload, SceneCorrectionModal } from './SceneCorrectionModal';
 import { SceneInlineEditor } from './SceneInlineEditor';
+import { StoryFloatingBar } from './StoryFloatingBar';
+import { StoryTurnSearchBar } from './StoryTurnSearchBar';
 import { WorkspaceTab } from './TopNav';
 import { TtsPlayerBar } from './TtsPlayerBar';
+
+function renderHighlightedText(text: string, terms: string[]): React.ReactNode {
+  if (!terms.length || !text) return text;
+  const escaped = terms
+    .filter((t) => t.trim().length >= 2)
+    .sort((a, b) => b.length - a.length)
+    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!escaped.length) return text;
+
+  const regex = new RegExp(`(${escaped.join('|')})`, 'gi');
+  const parts = text.split(regex);
+  if (parts.length <= 1) return text;
+
+  return parts.map((part, idx) =>
+    idx % 2 === 1 ? (
+      <mark
+        key={idx}
+        className="bg-[#FEF3C7] text-[#111827] rounded-xs px-0.5"
+      >
+        {part}
+      </mark>
+    ) : (
+      <React.Fragment key={idx}>{part}</React.Fragment>
+    ),
+  );
+}
 
 interface StoryWorkspaceProps {
   project: StoryProject;
@@ -74,6 +120,29 @@ interface StoryWorkspaceProps {
   modelConfig: ModelConfig;
   onChangeModelConfig: (next: ModelConfig) => void;
   speech: NarrativeSpeechControls;
+  onPersistNow: (
+    scopeLabel?: string,
+  ) => Promise<{ ok: boolean; location: 'cloud' | 'local'; message: string }>;
+  onShareStory: () => void;
+  onCollaborateStory: () => void;
+  onShareScene: (turn: StoryTurn) => void;
+  onEditTagsAndVisibility?: () => void;
+  displayMode: StoryDisplayMode;
+  onChangeDisplayMode: (mode: StoryDisplayMode) => void;
+  publicStoryId: string;
+  storyComments: StoryComment[];
+  currentReaderUid: string;
+  currentReaderName: string;
+  onAddComment: (
+    storyId: string,
+    payload: CommentAddPayload,
+  ) => Promise<void> | void;
+  onDeleteComment: (storyId: string, commentId: string) => Promise<void> | void;
+  collections: UserCollection[];
+  isSubscribed: boolean;
+  onToggleSubscribe: () => void;
+  onToggleCollectionStory: (collectionId: string, storyId: string) => void;
+  onQuickCreateCollection: (name: string, storyId: string) => void;
 }
 
 export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
@@ -101,16 +170,46 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
   modelConfig,
   onChangeModelConfig,
   speech,
+  onPersistNow,
+  onShareStory,
+  onCollaborateStory,
+  onShareScene,
+  onEditTagsAndVisibility,
+  displayMode,
+  onChangeDisplayMode,
+  publicStoryId,
+  storyComments,
+  currentReaderUid,
+  currentReaderName,
+  onAddComment,
+  onDeleteComment,
+  collections,
+  isSubscribed,
+  onToggleSubscribe,
+  onToggleCollectionStory,
+  onQuickCreateCollection,
 }) => {
   const [customAction, setCustomAction] = useState('');
   const [quickSaveLabel, setQuickSaveLabel] = useState('');
   const [saveToast, setSaveToast] = useState<string | null>(null);
+  const [copiedLinkType, setCopiedLinkType] = useState<'share' | 'collab' | null>(null);
+  const [persistError, setPersistError] = useState<string | null>(null);
+  const [isPersisting, setIsPersisting] = useState(false);
   const [flaggingTurn, setFlaggingTurn] = useState<StoryTurn | null>(null);
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const [loreTarget, setLoreTarget] = useState<LoreTarget | null>(null);
   const [illustrationTarget, setIllustrationTarget] =
     useState<IllustrationTarget | null>(null);
+  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
+  const [selectedChapterIdx, setSelectedChapterIdx] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [characterFilter, setCharacterFilter] = useState('');
+  const [filterStream, setFilterStream] = useState(true);
+  const [highlightedTurnId, setHighlightedTurnId] = useState<string | null>(null);
   const latestSceneRef = useRef<HTMLElement>(null);
+  const turnCardRefs = useRef<Record<string, HTMLElement | null>>({});
+  const highlightTimerRef = useRef<number | null>(null);
+  const prevTurnCountRef = useRef(project.turns.length);
   const pendingRef = useRef<HTMLDivElement>(null);
   const customActionRef = useRef<HTMLTextAreaElement>(null);
 
@@ -128,7 +227,21 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
   useEffect(() => {
     setEditingTurnId(null);
     setIllustrationTarget(null);
+    setSelectedSceneId(null);
+    setSelectedChapterIdx(0);
+    setSearchQuery('');
+    setCharacterFilter('');
+    setHighlightedTurnId(null);
+    prevTurnCountRef.current = project.turns.length;
   }, [project.id]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
 
   const latestTurn = project.turns[project.turns.length - 1];
 
@@ -142,6 +255,175 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
     return map;
   }, [project.chapters]);
 
+  const chapterGroups = useMemo(() => {
+    const chapters = project.chapters ?? [];
+    if (chapters.length === 0) {
+      return [
+        {
+          id: project.id,
+          title: 'Story Manuscript',
+          summary: '',
+          turns: project.turns,
+          isSynthetic: true,
+        },
+      ];
+    }
+    const turnMap = new Map(project.turns.map((t) => [t.id, t]));
+    const assigned = new Set<string>();
+    const groups = chapters
+      .map((ch) => {
+        const chTurns = ch.turnIds
+          .map((id) => turnMap.get(id))
+          .filter((t): t is StoryTurn => Boolean(t));
+        chTurns.forEach((t) => assigned.add(t.id));
+        return {
+          id: ch.id,
+          title: `Chapter ${String(ch.chapterNumber).padStart(2, '0')} — ${ch.title}`,
+          summary: ch.summary,
+          turns: chTurns,
+          isSynthetic: false,
+        };
+      })
+      .filter((g) => g.turns.length > 0);
+
+    const unassigned = project.turns.filter((t) => !assigned.has(t.id));
+    if (unassigned.length > 0) {
+      groups.push({
+        id: `${project.id}-unassigned`,
+        title: 'Recent Unassigned Scenes',
+        summary: '',
+        turns: unassigned,
+        isSynthetic: true,
+      });
+    }
+    return groups;
+  }, [project.chapters, project.turns, project.id]);
+
+  const activeSceneIndex = useMemo(() => {
+    if (project.turns.length === 0) return 0;
+    if (selectedSceneId) {
+      const idx = project.turns.findIndex((t) => t.id === selectedSceneId);
+      if (idx >= 0) return idx;
+    }
+    return project.turns.length - 1;
+  }, [project.turns, selectedSceneId]);
+
+  const activeSceneTurn = project.turns[activeSceneIndex] ?? latestTurn;
+
+  const clampedChapterIdx = Math.min(
+    Math.max(0, selectedChapterIdx),
+    Math.max(0, chapterGroups.length - 1),
+  );
+  const activeChapterGroup = chapterGroups[clampedChapterIdx];
+
+  const commentScopeConfig: {
+    scope: CommentTargetType;
+    targetId: string;
+    targetLabel?: string;
+  } = (() => {
+    if (displayMode === 'scene' && activeSceneTurn) {
+      return {
+        scope: 'scene',
+        targetId: activeSceneTurn.id,
+        targetLabel: `Scene ${String(activeSceneTurn.turnNumber).padStart(2, '0')} — ${activeSceneTurn.sceneTitle}`,
+      };
+    }
+    if (
+      displayMode === 'chapters' &&
+      activeChapterGroup &&
+      !activeChapterGroup.isSynthetic
+    ) {
+      return {
+        scope: 'chapter',
+        targetId: activeChapterGroup.id,
+        targetLabel: activeChapterGroup.title,
+      };
+    }
+    return {
+      scope: 'story',
+      targetId: publicStoryId,
+      targetLabel: project.title,
+    };
+  })();
+
+  const characterOptions = useMemo(
+    () => extractCharacterNames(project.characters, project.turns),
+    [project.characters, project.turns],
+  );
+
+  const turnMatches = useMemo(
+    () =>
+      matchStoryTurns(
+        project.turns,
+        searchQuery,
+        characterFilter,
+        turnChapterMap,
+      ),
+    [project.turns, searchQuery, characterFilter, turnChapterMap],
+  );
+
+  const hasActiveFilter = Boolean(searchQuery.trim() || characterFilter.trim());
+
+  const displayedTurns = useMemo(() => {
+    if (hasActiveFilter && filterStream) {
+      return turnMatches.map((m) => m.turn);
+    }
+    if (displayMode === 'scene') {
+      return activeSceneTurn ? [activeSceneTurn] : [];
+    }
+    if (displayMode === 'chapters') {
+      return activeChapterGroup?.turns ?? project.turns;
+    }
+    return project.turns;
+  }, [
+    hasActiveFilter,
+    filterStream,
+    turnMatches,
+    displayMode,
+    activeSceneTurn,
+    activeChapterGroup,
+    project.turns,
+  ]);
+
+  const highlightTerms = useMemo(() => {
+    const terms = extractHighlightTerms(searchQuery);
+    if (characterFilter.trim()) {
+      terms.push(characterFilter.trim());
+    }
+    return terms;
+  }, [searchQuery, characterFilter]);
+
+  const handleJumpToTurn = (turnId: string) => {
+    if (displayMode === 'scene') {
+      setSelectedSceneId(turnId);
+    } else if (displayMode === 'chapters') {
+      const chIdx = chapterGroups.findIndex((g) =>
+        g.turns.some((t) => t.id === turnId),
+      );
+      if (chIdx >= 0) setSelectedChapterIdx(chIdx);
+    }
+
+    const isCurrentlyVisible = displayedTurns.some((t) => t.id === turnId);
+    if (!isCurrentlyVisible && hasActiveFilter) {
+      setFilterStream(false);
+    }
+
+    const scrollAndHighlight = () => {
+      const targetEl = turnCardRefs.current[turnId];
+      if (!targetEl) return;
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setHighlightedTurnId(turnId);
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+      highlightTimerRef.current = window.setTimeout(() => {
+        setHighlightedTurnId((curr) => (curr === turnId ? null : curr));
+      }, 2200);
+    };
+
+    requestAnimationFrame(() => requestAnimationFrame(scrollAndHighlight));
+  };
+
   useEffect(() => {
     if (isAdvancing && pendingRef.current) {
       pendingRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -149,10 +431,16 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
   }, [isAdvancing]);
 
   useEffect(() => {
-    if (project.turns.length > 1 && latestSceneRef.current) {
-      latestSceneRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (project.turns.length > prevTurnCountRef.current) {
+      setSearchQuery('');
+      setCharacterFilter('');
+      setSelectedSceneId(project.turns[project.turns.length - 1]?.id ?? null);
+      if (latestSceneRef.current) {
+        latestSceneRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     }
-  }, [project.turns.length]);
+    prevTurnCountRef.current = project.turns.length;
+  }, [project.turns]);
 
   const handleChoiceClick = (choice: StoryChoice) => {
     if (isAdvancing) return;
@@ -180,13 +468,30 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
     setTimeout(() => setSaveToast(null), 2600);
   };
 
+  const handlePersist = async (scopeLabel?: string) => {
+    if (isPersisting) return;
+    setPersistError(null);
+    setIsPersisting(true);
+    try {
+      const result = await onPersistNow(scopeLabel);
+      if (result.ok) {
+        setSaveToast(result.message);
+        setTimeout(() => setSaveToast(null), 3000);
+      } else {
+        setPersistError(result.message);
+      }
+    } finally {
+      setIsPersisting(false);
+    }
+  };
+
   const pinnedLore = project.crossIndex.filter((e) => e.status === 'active').slice(0, 6);
 
   return (
-    <div className="max-w-[1320px] mx-auto px-4 sm:px-8 py-8">
+    <div className="max-w-[1320px] mx-auto px-4 sm:px-8 pt-8 pb-28">
       {/* Story Masthead */}
       <div className="pb-6 mb-8 border-b border-neutral-200 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <p className="text-xs text-[#6B7280]">
             {project.universe} <span aria-hidden="true">·</span> {project.setting}{' '}
             <span aria-hidden="true">·</span> {project.tone}
@@ -194,49 +499,120 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
           <h1 className="font-editorial text-3xl sm:text-4xl font-semibold text-[#111827] mt-1.5 text-balance">
             {project.title}
           </h1>
+          {project.tags && (
+            <p className="text-xs text-[#6B7280] mt-1.5 truncate">
+              <span className="font-medium text-[#111827]">
+                {project.tags.rating}
+              </span>{' '}
+              <span aria-hidden="true">·</span>{' '}
+              {project.tags.categories.join(', ')}{' '}
+              {project.tags.freeforms.length > 0 && (
+                <>
+                  <span aria-hidden="true">·</span>{' '}
+                  {project.tags.freeforms.slice(0, 4).join(', ')}
+                </>
+              )}
+            </p>
+          )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          <button
-            type="button"
-            onClick={onOpenStoriesLibrary}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap"
-          >
-            <Library className="w-4 h-4 text-[#1D4ED8]" />
-            My Stories ({storyCount})
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const label = `Scene ${String(latestTurn?.turnNumber ?? 1).padStart(
-                2,
-                '0',
-              )} — ${latestTurn?.sceneTitle ?? 'Checkpoint'}`;
-              onCreateSavePoint(label);
-              setSaveToast(`Saved "${label}"`);
-              setTimeout(() => setSaveToast(null), 2600);
-            }}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap"
-          >
-            <Bookmark className="w-4 h-4 text-[#1D4ED8]" />
-            Save Point
-          </button>
-          <button
-            type="button"
-            onClick={onOpenHtmlExport}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap"
-          >
-            <Download className="w-4 h-4 text-[#1D4ED8]" />
-            Export HTML
-          </button>
-          <button
-            type="button"
-            onClick={onRunAuditAndOpen}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap"
-          >
-            <ShieldCheck className="w-4 h-4 text-[#1D4ED8]" />
-            Audit Continuity
-          </button>
+        {/* Visibility/Tags + Two Links for This Story: Share Link & Collaboration Link */}
+        <div
+          aria-label="Story Share and Collaboration Links"
+          className="flex flex-wrap items-center gap-2 shrink-0"
+        >
+          {onEditTagsAndVisibility && (
+            <button
+              type="button"
+              onClick={onEditTagsAndVisibility}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                project.isPrivate
+                  ? 'text-[#92400E] bg-[#FFFBEB] border-[#FDE68A] hover:bg-[#FEF3C7]'
+                  : 'text-[#111827] bg-white border-neutral-300 hover:bg-neutral-50'
+              }`}
+            >
+              {project.isPrivate ? (
+                <EyeOff className="w-3.5 h-3.5 text-[#B45309]" />
+              ) : (
+                <Eye className="w-3.5 h-3.5 text-[#15803D]" />
+              )}
+              <span>{project.isPrivate ? 'Private' : 'Public'}</span>
+              <span aria-hidden="true" className="text-[#9CA3AF]">
+                ·
+              </span>
+              <Tag className="w-3 h-3 text-[#1D4ED8]" />
+              <span>AO3 Tags</span>
+            </button>
+          )}
+          <div className="inline-flex items-center border border-neutral-300 rounded-lg bg-white overflow-hidden">
+            <button
+              type="button"
+              onClick={onShareStory}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#111827] hover:bg-neutral-50 transition-colors whitespace-nowrap shrink-0"
+            >
+              <Share2 className="w-3.5 h-3.5 text-[#1D4ED8]" />
+              {project.shareId ? 'Share Link Ready' : 'Share Link'}
+            </button>
+            {project.shareId && (
+              <button
+                type="button"
+                aria-label="Copy story share link"
+                title={buildShareUrl(window.location.origin, project.shareId)}
+                onClick={async () => {
+                  const url = buildShareUrl(window.location.origin, project.shareId!);
+                  try {
+                    await navigator.clipboard.writeText(url);
+                    setCopiedLinkType('share');
+                    setTimeout(() => setCopiedLinkType(null), 1800);
+                  } catch {
+                    onShareStory();
+                  }
+                }}
+                className="px-2 py-1.5 border-l border-neutral-200 text-[#4B5563] hover:text-[#111827] hover:bg-neutral-50 transition-colors shrink-0"
+              >
+                {copiedLinkType === 'share' ? (
+                  <Check className="w-3.5 h-3.5 text-[#15803D]" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
+          </div>
+
+          <div className="inline-flex items-center border border-neutral-300 rounded-lg bg-white overflow-hidden">
+            <button
+              type="button"
+              onClick={onCollaborateStory}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#111827] hover:bg-neutral-50 transition-colors whitespace-nowrap shrink-0"
+            >
+              <Users className="w-3.5 h-3.5 text-[#1D4ED8]" />
+              {project.collabId ? 'Collab Link Ready' : 'Collaborate Link'}
+            </button>
+            {project.collabId && (
+              <button
+                type="button"
+                aria-label="Copy story collaboration link"
+                title={buildCollabUrl(window.location.origin, project.collabId)}
+                onClick={async () => {
+                  const url = buildCollabUrl(window.location.origin, project.collabId!);
+                  try {
+                    await navigator.clipboard.writeText(url);
+                    setCopiedLinkType('collab');
+                    setTimeout(() => setCopiedLinkType(null), 1800);
+                  } catch {
+                    onCollaborateStory();
+                  }
+                }}
+                className="px-2 py-1.5 border-l border-neutral-200 text-[#4B5563] hover:text-[#111827] hover:bg-neutral-50 transition-colors shrink-0"
+              >
+                {copiedLinkType === 'collab' ? (
+                  <Check className="w-3.5 h-3.5 text-[#15803D]" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -247,13 +623,169 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
         </div>
       )}
 
+      {persistError && (
+        <div
+          role="alert"
+          className="mb-6 px-4 py-2.5 text-sm text-[#991B1B] bg-[#FEF2F2] border border-[#FECACA] rounded-lg flex items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-[#DC2626]" />
+            <span className="break-words">{persistError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPersistError(null)}
+            className="text-xs font-medium underline shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-8 items-start">
         {/* Left Main Narrative & Steering Column */}
         <main className="space-y-8 min-w-0">
+          {project.turns.length > 0 && (
+            <StoryTurnSearchBar
+              turns={project.turns}
+              characterOptions={characterOptions}
+              query={searchQuery}
+              characterFilter={characterFilter}
+              filterStream={filterStream}
+              matches={turnMatches}
+              onQueryChange={(val) => {
+                setSearchQuery(val);
+                setFilterStream(true);
+              }}
+              onCharacterFilterChange={(val) => {
+                setCharacterFilter(val);
+                setFilterStream(true);
+              }}
+              onFilterStreamChange={setFilterStream}
+              onJumpToTurn={handleJumpToTurn}
+              onClearAll={() => {
+                setSearchQuery('');
+                setCharacterFilter('');
+                setFilterStream(true);
+              }}
+            />
+          )}
+
+          {/* View Mode Toggle: Current Scene / Chapters / Full Story */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-neutral-200 rounded-xl px-4 py-2.5">
+            <div
+              role="group"
+              aria-label="Workspace display mode"
+              className="inline-flex items-center bg-neutral-100 border border-neutral-200 rounded-lg p-0.5"
+            >
+              {(
+                [
+                  { id: 'scene', label: 'Current Scene' },
+                  { id: 'chapters', label: 'Chapters' },
+                  { id: 'story', label: 'Full Story' },
+                ] as const
+              ).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onChangeDisplayMode(item.id)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    displayMode === item.id
+                      ? 'bg-white text-[#1D4ED8] shadow-xs'
+                      : 'text-[#4B5563] hover:text-[#111827]'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            {displayMode === 'scene' && project.turns.length > 0 && (
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  disabled={activeSceneIndex <= 0}
+                  onClick={() => {
+                    const prev = project.turns[Math.max(0, activeSceneIndex - 1)];
+                    if (prev) setSelectedSceneId(prev.id);
+                  }}
+                  aria-label="Previous scene"
+                  className="p-1.5 border border-neutral-300 rounded-md disabled:opacity-40 hover:bg-neutral-50 cursor-pointer"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <span className="font-mono text-[#111827] tabular-nums">
+                  Scene {activeSceneIndex + 1} of {project.turns.length}
+                </span>
+                <button
+                  type="button"
+                  disabled={activeSceneIndex >= project.turns.length - 1}
+                  onClick={() => {
+                    const next =
+                      project.turns[
+                        Math.min(project.turns.length - 1, activeSceneIndex + 1)
+                      ];
+                    if (next) setSelectedSceneId(next.id);
+                  }}
+                  aria-label="Next scene"
+                  className="p-1.5 border border-neutral-300 rounded-md disabled:opacity-40 hover:bg-neutral-50 cursor-pointer"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {displayMode === 'chapters' && chapterGroups.length > 0 && (
+              <div className="flex items-center gap-2 text-xs">
+                {chapterGroups.length > 1 ? (
+                  <select
+                    aria-label="Select chapter"
+                    value={clampedChapterIdx}
+                    onChange={(e) => setSelectedChapterIdx(Number(e.target.value))}
+                    className="px-2.5 py-1.5 text-xs text-[#111827] bg-white border border-neutral-300 rounded-lg"
+                  >
+                    {chapterGroups.map((g, idx) => (
+                      <option key={g.id} value={idx}>
+                        {g.title}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="text-[#4B5563] font-medium">
+                    {activeChapterGroup?.title}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Narrative Turns Stream */}
           <div className="space-y-8">
-            {project.turns.map((turn, index) => {
-              const isLatest = index === project.turns.length - 1;
+            {displayedTurns.length === 0 && hasActiveFilter && (
+              <div className="bg-white border border-neutral-200 rounded-xl p-8 text-center space-y-3">
+                <p className="text-base font-semibold text-[#111827]">
+                  No scenes match your current search
+                </p>
+                <p className="text-sm text-[#4B5563]">
+                  Try a scene number (like <span className="font-mono">#1</span>), a
+                  character name, a scene title, or another keyword.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setCharacterFilter('');
+                  }}
+                  className="inline-flex items-center px-4 py-2 text-xs font-medium text-white bg-[#1D4ED8] hover:bg-[#1E40AF] rounded-lg transition-colors"
+                >
+                  Clear Search & Filters
+                </button>
+              </div>
+            )}
+
+            {displayedTurns.map((turn) => {
+              const isLatest = turn.id === latestTurn?.id;
+              const isHighlighted = highlightedTurnId === turn.id;
               const chapterInfo = turnChapterMap.get(turn.id);
               const ttsKey = `scene:${turn.id}`;
               const isTtsLoading = speech.loadingKey === ttsKey;
@@ -265,12 +797,27 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
                 text: `Scene ${turn.turnNumber}: ${turn.sceneTitle}.\n\n${turn.prose.join('\n\n')}`,
                 tone: project.tone,
               };
+              const isTtsReady = speech.isItemReady(ttsItem);
+              const isTtsPrecomputing = speech.isItemPrecomputing(ttsItem);
               const isEditingThis = editingTurnId === turn.id;
               return (
                 <article
                   key={turn.id}
-                  ref={isLatest ? latestSceneRef : undefined}
-                  className="bg-white border border-neutral-200 rounded-xl p-6 sm:p-8"
+                  id={`story-turn-${turn.turnNumber}`}
+                  data-turn-number={turn.turnNumber}
+                  ref={(el) => {
+                    turnCardRefs.current[turn.id] = el;
+                    if (isLatest) {
+                      (
+                        latestSceneRef as React.MutableRefObject<HTMLElement | null>
+                      ).current = el;
+                    }
+                  }}
+                  className={`scroll-mt-24 bg-white border rounded-xl p-6 sm:p-8 transition-shadow ${
+                    isHighlighted
+                      ? 'border-[#1D4ED8] ring-2 ring-[#1D4ED8]/25'
+                      : 'border-neutral-200'
+                  }`}
                 >
                   {isEditingThis ? (
                     <SceneInlineEditor
@@ -306,7 +853,7 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
                             <span aria-hidden="true">·</span> {turn.inStoryTime}
                           </p>
                           <h2 className="font-editorial text-2xl font-semibold text-[#111827] mt-1">
-                            {turn.sceneTitle}
+                            {renderHighlightedText(turn.sceneTitle, highlightTerms)}
                           </h2>
                         </div>
 
@@ -321,7 +868,20 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
                                   ? `Pause narration for scene ${turn.turnNumber}`
                                   : `Listen to scene ${turn.turnNumber}`
                             }
-                            title="Read scene aloud (Text-to-Speech)"
+                            title={
+                              isTtsReady
+                                ? 'Narration ready — click to play immediately'
+                                : isTtsPrecomputing
+                                  ? 'Pre-computing narration in background...'
+                                  : 'Read scene aloud (Text-to-Speech)'
+                            }
+                            data-narration-status={
+                              isTtsReady
+                                ? 'ready'
+                                : isTtsPrecomputing
+                                  ? 'precomputing'
+                                  : 'idle'
+                            }
                             className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border rounded-lg transition-colors whitespace-nowrap shrink-0 ${
                               isTtsActive || isTtsLoading
                                 ? 'text-[#1D4ED8] bg-[#EFF6FF] border-[#BFDBFE]'
@@ -392,16 +952,56 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
                           </button>
                           <button
                             type="button"
+                            disabled={isPersisting}
+                            onClick={() =>
+                              void handlePersist(
+                                `Scene ${String(turn.turnNumber).padStart(2, '0')}`,
+                              )
+                            }
+                            aria-label={`Save scene ${turn.turnNumber} to Firestore`}
+                            title="Save scene to Firestore & browser storage"
+                            className="inline-flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-[#4B5563] hover:text-[#1D4ED8] hover:bg-[#F8FAFC] border border-neutral-200 hover:border-[#BFDBFE] disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                          >
+                            <Save className="w-3.5 h-3.5" />
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onShareScene(turn)}
+                            aria-label={`Share scene ${turn.turnNumber}`}
+                            title="Share scene via Firestore link"
+                            className="inline-flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-[#4B5563] hover:text-[#1D4ED8] hover:bg-[#F8FAFC] border border-neutral-200 hover:border-[#BFDBFE] rounded-lg transition-colors whitespace-nowrap shrink-0"
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                            Share
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => {
                               const filename = downloadSceneHtml(project, turn);
                               setSaveToast(`Saved ${filename}`);
                               setTimeout(() => setSaveToast(null), 2600);
                             }}
-                            aria-label={`Save scene ${turn.turnNumber} HTML`}
-                            title="Save scene HTML source"
-                            className="p-1.5 text-[#6B7280] hover:text-[#1D4ED8] hover:bg-[#F8FAFC] border border-neutral-200 hover:border-[#BFDBFE] rounded-lg transition-colors"
+                            aria-label={`Download scene ${turn.turnNumber} HTML`}
+                            title="Download scene as HTML"
+                            className="inline-flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-[#4B5563] hover:text-[#1D4ED8] hover:bg-[#F8FAFC] border border-neutral-200 hover:border-[#BFDBFE] rounded-lg transition-colors whitespace-nowrap shrink-0"
                           >
-                            <Save className="w-3.5 h-3.5" />
+                            <Download className="w-3.5 h-3.5" />
+                            HTML
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const filename = await downloadScenePdf(project, turn);
+                              setSaveToast(`Saved ${filename}`);
+                              setTimeout(() => setSaveToast(null), 2600);
+                            }}
+                            aria-label={`Download scene ${turn.turnNumber} PDF`}
+                            title="Download scene as PDF"
+                            className="inline-flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-[#4B5563] hover:text-[#1D4ED8] hover:bg-[#F8FAFC] border border-neutral-200 hover:border-[#BFDBFE] rounded-lg transition-colors whitespace-nowrap shrink-0"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            PDF
                           </button>
                           {!isLatest && (
                             <button
@@ -427,7 +1027,7 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
                       {turn.userAction && (
                         <div className="mt-4 px-4 py-2.5 bg-neutral-50 border border-neutral-200 rounded-lg text-sm text-[#374151] whitespace-pre-wrap">
                           <span className="font-semibold text-[#111827]">Action taken: </span>
-                          {turn.userAction}
+                          {renderHighlightedText(turn.userAction, highlightTerms)}
                         </div>
                       )}
 
@@ -463,7 +1063,7 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
                       {/* Literary Prose */}
                       <div className="mt-5 space-y-4 max-w-[68ch] text-[15.5px] leading-[1.75] text-[#111827]">
                         {turn.prose.map((paragraph, pIdx) => (
-                          <p key={pIdx}>{paragraph}</p>
+                          <p key={pIdx}>{renderHighlightedText(paragraph, highlightTerms)}</p>
                         ))}
                       </div>
 
@@ -471,7 +1071,11 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
                       <div className="mt-6 pt-4 border-t border-neutral-100 space-y-1.5">
                         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#6B7280]">
                           <span>
-                            Present: {turn.activeCharacters.join(' · ') || 'Narrator'}
+                            Present:{' '}
+                            {renderHighlightedText(
+                              turn.activeCharacters.join(' · ') || 'Narrator',
+                              highlightTerms,
+                            )}
                           </span>
                           <span className="font-mono tabular-nums">
                             {turn.continuityNotes.length} continuity checks passed
@@ -702,6 +1306,23 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
               </form>
             </section>
           )}
+
+          {/* Hierarchical Discussion & Sub-Comments */}
+          <CommentsSection
+            storyId={publicStoryId}
+            comments={storyComments}
+            chapters={project.chapters ?? []}
+            turns={project.turns}
+            scope={commentScopeConfig.scope}
+            targetId={commentScopeConfig.targetId}
+            targetLabel={commentScopeConfig.targetLabel}
+            currentReaderUid={currentReaderUid}
+            currentReaderName={currentReaderName}
+            isOwner
+            onAddComment={onAddComment}
+            onDeleteComment={onDeleteComment}
+            compact
+          />
         </main>
 
         {/* Right Contextual Reference Rail */}
@@ -867,6 +1488,40 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
           </section>
         </aside>
       </div>
+
+      {/* Hovering Overlay Storywide Menu Bar */}
+      <StoryFloatingBar
+        displayMode={displayMode}
+        onChangeDisplayMode={onChangeDisplayMode}
+        storyIdForLibrary={publicStoryId}
+        project={project}
+        storyCount={storyCount}
+        collections={collections}
+        isSubscribed={isSubscribed}
+        onToggleSubscribe={onToggleSubscribe}
+        onToggleCollectionStory={onToggleCollectionStory}
+        onQuickCreateCollection={onQuickCreateCollection}
+        onPersistNow={() => void handlePersist('Story')}
+        isPersisting={isPersisting}
+        onShareStory={onShareStory}
+        onCollaborateStory={onCollaborateStory}
+        onOpenStoriesLibrary={onOpenStoriesLibrary}
+        onCreateCheckpoint={() => {
+          const label = `Scene ${String(latestTurn?.turnNumber ?? 1).padStart(
+            2,
+            '0',
+          )} — ${latestTurn?.sceneTitle ?? 'Checkpoint'}`;
+          onCreateSavePoint(label);
+          setSaveToast(`Saved "${label}"`);
+          setTimeout(() => setSaveToast(null), 2600);
+        }}
+        onRunAuditAndOpen={onRunAuditAndOpen}
+        onOpenHtmlExport={onOpenHtmlExport}
+        onToast={(msg) => {
+          setSaveToast(msg);
+          setTimeout(() => setSaveToast(null), 2600);
+        }}
+      />
 
       <SceneCorrectionModal
         turn={flaggingTurn}
