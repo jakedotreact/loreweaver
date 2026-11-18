@@ -18,7 +18,7 @@ import {
 interface LibraryShelfViewProps {
   mode: 'collections' | 'subscriptions';
   collections: UserCollection[];
-  subscriptions: StorySubscription[];
+  subscriptions?: StorySubscription[];
   allStories: PublicStoryWork[];
   onCreateCollection: (payload: {
     name: string;
@@ -34,7 +34,7 @@ interface LibraryShelfViewProps {
 export const LibraryShelfView: React.FC<LibraryShelfViewProps> = ({
   mode,
   collections,
-  subscriptions,
+  subscriptions = [],
   allStories,
   onCreateCollection,
   onDeleteCollection,
