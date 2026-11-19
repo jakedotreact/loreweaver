@@ -1,4 +1,6 @@
 import dns from 'dns/promises';
+import http from 'http';
+import https from 'https';
 import net from 'net';
 import JSZip from 'jszip';
 import { JSDOM } from 'jsdom';
@@ -133,6 +135,7 @@ export interface ImportStoryResult {
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_URL_BYTES = 5 * 1024 * 1024; // 5 MB
 const URL_TIMEOUT_MS = 15_000;
+const MAX_URL_REDIRECTS = 5;
 const MAX_TURNS_FOR_CLOUD = 180;
 const MAX_CHAPTERS_FOR_CLOUD = 95;
 
@@ -1083,43 +1086,91 @@ export function parseHtmlDocument(
   });
 }
 
-function isDisallowedIpAddress(ip: string): boolean {
+export interface ResolvedImportAddress {
+  address: string;
+  family: 4 | 6;
+}
+
+export type ImportDnsLookupFn = (
+  hostname: string,
+) => Promise<ResolvedImportAddress[]>;
+
+export interface ValidatedImportTarget {
+  url: URL;
+  addresses: ResolvedImportAddress[];
+}
+
+function parseMappedIpv4FromIpv6(ip: string): string | null {
+  if (!ip.startsWith('::ffff:')) return null;
+  const suffix = ip.slice('::ffff:'.length);
+  if (net.isIPv4(suffix)) return suffix;
+  const hexMatch = suffix.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (!hexMatch) return null;
+  const hi = Number.parseInt(hexMatch[1], 16);
+  const lo = Number.parseInt(hexMatch[2], 16);
+  if (Number.isNaN(hi) || Number.isNaN(lo)) return null;
+  return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+}
+
+export function isDisallowedIpAddress(ip: string): boolean {
   const trimmed = ip.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (!trimmed || trimmed.includes('%')) return true;
+
   const version = net.isIP(trimmed);
   if (version === 4) {
     const octets = trimmed.split('.').map((n) => Number.parseInt(n, 10));
-    if (octets.length !== 4 || octets.some((n) => Number.isNaN(n))) return true;
-    const [a, b] = octets;
+    if (octets.length !== 4 || octets.some((n) => Number.isNaN(n) || n < 0 || n > 255)) {
+      return true;
+    }
+    const [a, b, c] = octets;
     if (a === 0 || a === 10 || a === 127) return true;
     if (a === 169 && b === 254) return true; // Cloud metadata / link-local
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true; // RFC 1918
+    if (a === 192 && b === 0 && (c === 0 || c === 2)) return true; // IETF / TEST-NET-1
+    if (a === 192 && b === 168) return true; // RFC 1918
+    if (a === 198 && (b === 18 || b === 19)) return true; // Benchmarking
+    if (a === 198 && b === 51 && c === 100) return true; // TEST-NET-2
+    if (a === 203 && b === 0 && c === 113) return true; // TEST-NET-3
     if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
     if (a >= 224) return true; // Multicast & reserved
     return false;
   }
+
   if (version === 6) {
+    const mappedV4 = parseMappedIpv4FromIpv6(trimmed);
+    if (mappedV4) {
+      return isDisallowedIpAddress(mappedV4);
+    }
     if (
       trimmed === '::' ||
       trimmed === '::1' ||
-      trimmed.startsWith('fe80:') ||
-      trimmed.startsWith('fc') ||
-      trimmed.startsWith('fd')
+      /^fe[89ab][0-9a-f]:/.test(trimmed) ||
+      /^f[cd][0-9a-f]{0,2}:/.test(trimmed) ||
+      /^ff[0-9a-f]{0,2}:/.test(trimmed) ||
+      trimmed.startsWith('2001:db8:') ||
+      trimmed.startsWith('2001:0db8:') ||
+      trimmed.startsWith('64:ff9b:') ||
+      trimmed.startsWith('100::')
     ) {
       return true;
     }
-    if (trimmed.startsWith('::ffff:')) {
-      return isDisallowedIpAddress(trimmed.slice('::ffff:'.length));
-    }
     return false;
   }
-  return false;
+
+  return true;
 }
 
-export async function validateAndResolveImportUrl(
+export async function validateAndResolveImportTarget(
   rawUrl: string,
-  options?: { skipDnsLookup?: boolean },
-): Promise<URL> {
+  options?: {
+    skipDnsLookup?: boolean;
+    dnsLookup?: ImportDnsLookupFn;
+  },
+): Promise<ValidatedImportTarget> {
+  if (!rawUrl || typeof rawUrl !== 'string' || rawUrl.trim().length > 2048) {
+    throw new Error('Please enter a valid http:// or https:// story URL.');
+  }
+
   let parsed: URL;
   try {
     parsed = new URL(rawUrl.trim());
@@ -1131,43 +1182,86 @@ export async function validateAndResolveImportUrl(
     throw new Error('Only http:// and https:// URLs are supported for story import.');
   }
 
-  const hostname = parsed.hostname.trim().toLowerCase();
+  if (parsed.username || parsed.password) {
+    throw new Error('URLs with embedded credentials are not allowed.');
+  }
+
+  const rawHostname = parsed.hostname.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const hostname = rawHostname.replace(/\.+$/, '');
   if (
     !hostname ||
     hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
     hostname.endsWith('.local') ||
-    hostname.endsWith('.internal')
+    hostname.endsWith('.internal') ||
+    hostname.endsWith('.home.arpa') ||
+    hostname.endsWith('.localdomain') ||
+    hostname.endsWith('.lan') ||
+    hostname === 'metadata.google.internal'
   ) {
     throw new Error('Local or internal network URLs are not allowed.');
   }
 
-  if (net.isIP(hostname.replace(/^\[|\]$/g, ''))) {
+  const literalVersion = net.isIP(hostname);
+  if (literalVersion === 4 || literalVersion === 6) {
     if (isDisallowedIpAddress(hostname)) {
       throw new Error('Private or loopback IP addresses are not allowed.');
     }
-    return parsed;
+    return {
+      url: parsed,
+      addresses: [{ address: hostname, family: literalVersion }],
+    };
   }
 
-  if (!options?.skipDnsLookup) {
-    try {
-      const resolved = await dns.lookup(hostname, { all: true });
-      for (const addr of resolved) {
-        if (isDisallowedIpAddress(addr.address)) {
-          throw new Error('URL resolves to a restricted internal network address.');
-        }
-      }
-    } catch (err) {
-      if (
-        err instanceof Error &&
-        err.message.includes('restricted internal network')
-      ) {
-        throw err;
-      }
-      throw new Error(`Could not resolve hostname "${hostname}".`);
+  if (options?.skipDnsLookup) {
+    return { url: parsed, addresses: [] };
+  }
+
+  try {
+    const resolved = options?.dnsLookup
+      ? await options.dnsLookup(hostname)
+      : (await dns.lookup(hostname, { all: true })).map((entry) => ({
+          address: entry.address,
+          family: (entry.family === 6 ? 6 : 4) as 4 | 6,
+        }));
+
+    if (!resolved || resolved.length === 0) {
+      throw new Error('Could not resolve target hostname.');
     }
-  }
 
-  return parsed;
+    const addresses: ResolvedImportAddress[] = [];
+    for (const addr of resolved) {
+      if (isDisallowedIpAddress(addr.address)) {
+        throw new Error('URL resolves to a restricted internal network address.');
+      }
+      addresses.push({
+        address: addr.address,
+        family: net.isIPv6(addr.address) ? 6 : 4,
+      });
+    }
+
+    return { url: parsed, addresses };
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      (err.message.includes('restricted internal network') ||
+        err.message.includes('not allowed'))
+    ) {
+      throw err;
+    }
+    throw new Error('Could not resolve story URL hostname.');
+  }
+}
+
+export async function validateAndResolveImportUrl(
+  rawUrl: string,
+  options?: {
+    skipDnsLookup?: boolean;
+    dnsLookup?: ImportDnsLookupFn;
+  },
+): Promise<URL> {
+  const target = await validateAndResolveImportTarget(rawUrl, options);
+  return target.url;
 }
 
 function splitLongSceneParagraphs(
@@ -1425,9 +1519,9 @@ export async function structureExtractedStory(
           consequenceHint: ch.consequenceHint,
         }));
       }
-    } catch (err) {
+    } catch {
       warnings.push(
-        `AI cast/lore analysis skipped (${err instanceof Error ? err.message : 'unavailable'}). Imported full manuscript cleanly using structural parsing.`,
+        'AI cast/lore analysis was skipped because enrichment was unavailable. Imported full manuscript cleanly using structural parsing.',
       );
     }
   }
@@ -1739,52 +1833,202 @@ export async function importStoryFromFileBuffer(input: {
   return structureExtractedStory(extracted, input.options);
 }
 
-export async function importStoryFromUrl(input: {
-  url: string;
-  options?: ImportStoryOptions;
-  fetcher?: typeof fetch;
-  skipDnsLookup?: boolean;
-}): Promise<ImportStoryResult> {
-  const parsedUrl = await validateAndResolveImportUrl(input.url, {
-    skipDnsLookup: input.skipDnsLookup,
+interface PinnedFetchResponse {
+  status: number;
+  statusText: string;
+  headers: Headers;
+  bodyBuffer: Buffer;
+}
+
+const DEFAULT_FETCH_HEADERS = {
+  'User-Agent': 'FolioAndCanon-StoryImporter/1.0 (+https://folioandcanon.local)',
+  Accept:
+    'text/html,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text;q=0.9,*/*;q=0.8',
+};
+
+function fetchSingleHopWithPinnedDns(
+  targetUrl: URL,
+  addresses: ResolvedImportAddress[],
+  signal: AbortSignal,
+): Promise<PinnedFetchResponse> {
+  return new Promise((resolve, reject) => {
+    const isHttps = targetUrl.protocol === 'https:';
+    const transport = isHttps ? https : http;
+    const pinnedLookup: NonNullable<http.RequestOptions['lookup']> = (
+      _hostname,
+      opts,
+      callback,
+    ) => {
+      if (addresses.length === 0) {
+        callback(new Error('No validated destination IP addresses available.'), '', 4);
+        return;
+      }
+      const wantsAll = typeof opts === 'object' && opts !== null && opts.all === true;
+      if (wantsAll) {
+        (
+          callback as (
+            err: NodeJS.ErrnoException | null,
+            addresses: Array<{ address: string; family: number }>,
+          ) => void
+        )(
+          null,
+          addresses.map((a) => ({ address: a.address, family: a.family })),
+        );
+        return;
+      }
+      const requestedFamily =
+        typeof opts === 'number'
+          ? opts
+          : typeof opts === 'object' && opts !== null
+            ? opts.family
+            : undefined;
+      const chosen =
+        (requestedFamily
+          ? addresses.find((a) => a.family === requestedFamily)
+          : undefined) ?? addresses[0];
+      callback(null, chosen.address, chosen.family);
+    };
+
+    const port = targetUrl.port
+      ? Number.parseInt(targetUrl.port, 10)
+      : isHttps
+        ? 443
+        : 80;
+
+    let settled = false;
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      reject(err);
+    };
+
+    const req = transport.request(
+      {
+        protocol: targetUrl.protocol,
+        hostname: targetUrl.hostname.replace(/^\[|\]$/g, ''),
+        port,
+        path: `${targetUrl.pathname}${targetUrl.search}`,
+        method: 'GET',
+        headers: DEFAULT_FETCH_HEADERS,
+        lookup: addresses.length > 0 ? pinnedLookup : undefined,
+      },
+      (res) => {
+        const remoteAddress = res.socket?.remoteAddress;
+        if (remoteAddress && isDisallowedIpAddress(remoteAddress)) {
+          req.destroy();
+          fail(new Error('URL resolves to a restricted internal network address.'));
+          return;
+        }
+
+        const headers = new Headers();
+        for (const [k, v] of Object.entries(res.headers)) {
+          if (typeof v === 'string') {
+            headers.set(k, v);
+          } else if (Array.isArray(v)) {
+            headers.set(k, v.join(', '));
+          }
+        }
+
+        const contentLengthHeader = headers.get('content-length');
+        if (contentLengthHeader) {
+          const contentLength = Number.parseInt(contentLengthHeader, 10);
+          if (Number.isFinite(contentLength) && contentLength > MAX_URL_BYTES) {
+            req.destroy();
+            fail(new Error('Remote story document exceeds the 5 MB download limit.'));
+            return;
+          }
+        }
+
+        const chunks: Buffer[] = [];
+        let totalBytes = 0;
+
+        res.on('data', (chunk: Buffer) => {
+          totalBytes += chunk.byteLength;
+          if (totalBytes > MAX_URL_BYTES) {
+            req.destroy();
+            fail(new Error('Remote story document exceeds the 5 MB download limit.'));
+            return;
+          }
+          chunks.push(chunk);
+        });
+
+        res.on('end', () => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener('abort', onAbort);
+          resolve({
+            status: res.statusCode ?? 0,
+            statusText: res.statusMessage ?? '',
+            headers,
+            bodyBuffer: Buffer.concat(chunks),
+          });
+        });
+
+        res.on('error', () => {
+          fail(new Error('Unable to fetch story URL due to a network error.'));
+        });
+      },
+    );
+
+    const onAbort = () => {
+      const abortErr = new Error('Fetching the story URL timed out after 15 seconds.');
+      abortErr.name = 'AbortError';
+      req.destroy(abortErr);
+      fail(abortErr);
+    };
+
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+
+    req.on('socket', (socket) => {
+      socket.on('connect', () => {
+        if (socket.remoteAddress && isDisallowedIpAddress(socket.remoteAddress)) {
+          req.destroy();
+          fail(new Error('URL resolves to a restricted internal network address.'));
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      if (err.name === 'AbortError' || signal.aborted) {
+        const timeoutErr = new Error('Fetching the story URL timed out after 15 seconds.');
+        timeoutErr.name = 'AbortError';
+        fail(timeoutErr);
+        return;
+      }
+      fail(new Error('Unable to fetch story URL due to a network error.'));
+    });
+
+    req.end();
   });
+}
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), URL_TIMEOUT_MS);
-  const doFetch = input.fetcher ?? fetch;
-
+async function fetchSingleHopWithCustomFetcher(
+  targetUrl: URL,
+  fetcher: typeof fetch,
+  signal: AbortSignal,
+): Promise<PinnedFetchResponse> {
   let response: Response;
   try {
-    response = await doFetch(parsedUrl.toString(), {
+    response = await fetcher(targetUrl.toString(), {
       method: 'GET',
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'FolioAndCanon-StoryImporter/1.0 (+https://folioandcanon.local)',
-        Accept:
-          'text/html,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text;q=0.9,*/*;q=0.8',
-      },
+      redirect: 'manual',
+      signal,
+      headers: DEFAULT_FETCH_HEADERS,
     });
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error('Fetching the story URL timed out after 15 seconds.');
     }
-    throw new Error(
-      `Unable to fetch story URL: ${err instanceof Error ? err.message : 'Network error'}`,
-    );
-  } finally {
-    clearTimeout(timeout);
+    throw new Error('Unable to fetch story URL due to a network error.');
   }
 
-  if (!response.ok) {
-    throw new Error(`URL returned HTTP ${response.status} (${response.statusText || 'Error'}).`);
-  }
-
-  // Re-validate final URL after redirects if available
-  if (response.url) {
-    await validateAndResolveImportUrl(response.url, {
-      skipDnsLookup: input.skipDnsLookup,
-    });
+  if (response.type === 'opaqueredirect') {
+    throw new Error('Remote URL attempted an uninspectable redirect.');
   }
 
   const contentLengthHeader = response.headers.get('content-length');
@@ -1795,16 +2039,104 @@ export async function importStoryFromUrl(input: {
     }
   }
 
-  const arrayBuffer = await response.arrayBuffer();
-  if (arrayBuffer.byteLength === 0) {
-    throw new Error('The fetched URL returned an empty response.');
-  }
-  if (arrayBuffer.byteLength > MAX_URL_BYTES) {
+  const isRedirect = response.status >= 300 && response.status < 400;
+  const arrayBuffer = isRedirect ? new ArrayBuffer(0) : await response.arrayBuffer();
+  if (!isRedirect && arrayBuffer.byteLength > MAX_URL_BYTES) {
     throw new Error('Remote story document exceeds the 5 MB download limit.');
   }
 
-  const buffer = Buffer.from(arrayBuffer);
-  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  return {
+    status: response.status,
+    statusText: response.statusText || '',
+    headers: response.headers,
+    bodyBuffer: Buffer.from(arrayBuffer),
+  };
+}
+
+export async function importStoryFromUrl(input: {
+  url: string;
+  options?: ImportStoryOptions;
+  fetcher?: typeof fetch;
+  skipDnsLookup?: boolean;
+  dnsLookup?: ImportDnsLookupFn;
+}): Promise<ImportStoryResult> {
+  let currentTarget = await validateAndResolveImportTarget(input.url, {
+    skipDnsLookup: input.skipDnsLookup,
+    dnsLookup: input.dnsLookup,
+  });
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), URL_TIMEOUT_MS);
+
+  let hopResponse: PinnedFetchResponse | null = null;
+  try {
+    for (let redirectCount = 0; redirectCount <= MAX_URL_REDIRECTS; redirectCount += 1) {
+      const res = input.fetcher
+        ? await fetchSingleHopWithCustomFetcher(
+            currentTarget.url,
+            input.fetcher,
+            controller.signal,
+          )
+        : await fetchSingleHopWithPinnedDns(
+            currentTarget.url,
+            currentTarget.addresses,
+            controller.signal,
+          );
+
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get('location');
+        if (!location) {
+          throw new Error(`URL returned HTTP ${res.status} without a redirect location.`);
+        }
+        if (redirectCount >= MAX_URL_REDIRECTS) {
+          throw new Error('Too many redirects while fetching story URL.');
+        }
+
+        let resolvedRedirectUrl: URL;
+        try {
+          resolvedRedirectUrl = new URL(location, currentTarget.url);
+        } catch {
+          throw new Error('Remote URL returned an invalid redirect target.');
+        }
+
+        // Validate every redirect hop BEFORE issuing the next request
+        currentTarget = await validateAndResolveImportTarget(
+          resolvedRedirectUrl.toString(),
+          {
+            skipDnsLookup: input.skipDnsLookup,
+            dnsLookup: input.dnsLookup,
+          },
+        );
+        continue;
+      }
+
+      hopResponse = res;
+      break;
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!hopResponse) {
+    throw new Error('Too many redirects while fetching story URL.');
+  }
+
+  if (hopResponse.status < 200 || hopResponse.status >= 300) {
+    throw new Error(
+      `URL returned HTTP ${hopResponse.status} (${hopResponse.statusText || 'Error'}).`,
+    );
+  }
+
+  if (hopResponse.bodyBuffer.byteLength === 0) {
+    throw new Error('The fetched URL returned an empty response.');
+  }
+  if (hopResponse.bodyBuffer.byteLength > MAX_URL_BYTES) {
+    throw new Error('Remote story document exceeds the 5 MB download limit.');
+  }
+
+  const parsedUrl = currentTarget.url;
+  const buffer = hopResponse.bodyBuffer;
+  const contentType = (hopResponse.headers.get('content-type') || '').toLowerCase();
   const urlPathName = parsedUrl.pathname.split('/').pop() || parsedUrl.hostname;
 
   let format: ImportFormat = 'html';

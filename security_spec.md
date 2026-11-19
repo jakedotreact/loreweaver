@@ -33,8 +33,9 @@
    - Creating a kudo requires parent `/publicStories/{publicId}` to have `isPrivate == false` and enforces `getAfter(/databases/.../publicStories/$(publicId)).data.kudosCount == get(...).data.kudosCount + 1`.
    - Incrementing `kudosCount` on `/publicStories/{publicId}` validates `+1` increment alongside atomic `!exists(...)` + `existsAfter(...)` on the corresponding `/kudos/{kudoId}` doc.
 8. **Hierarchical Reader Comments (`/publicStories/{publicId}/comments/{commentId}`)**:
-   - Creating a comment requires parent `/publicStories/{publicId}` to have `isPrivate == false`, `incoming().authorUid == request.auth.uid`, valid `targetType in ['story', 'chapter', 'scene']`, `targetId`, `body` length `1..4000`, `storyIsPrivate == false`, and `getAfter(.../publicStories/$(publicId)).data.commentCount == get(...).data.commentCount + 1`.
-   - Only `authorUid` can update a comment's `body` + `updatedAt`; either `authorUid` or the public story `ownerUid` can delete a comment (requiring atomic `commentCount - 1`).
+   - Creating a comment requires parent `/publicStories/{publicId}` to have `isPrivate == false`, `incoming().authorUid == request.auth.uid`, valid `targetType in ['story', 'chapter', 'scene']`, `targetId`, `body` length `1..4000`, `storyIsPrivate == false`, `getAfter(.../publicStories/$(publicId)).data.commentCount == get(...).data.commentCount + 1`, and `getAfter(...).data.lastCommentId == commentId`.
+   - Updating `commentCount` on `/publicStories/{publicId}` requires `lastCommentId` alongside `!exists(...)` + `existsAfter(...)` (authored by `request.auth.uid`) for `+1` increments, and `exists(...)` + `!existsAfter(...)` (authorized by comment author or story owner) for `-1` decrements.
+   - Only `authorUid` can update a comment's `body` + `updatedAt`; either `authorUid` or the public story `ownerUid` can delete a comment (requiring atomic `commentCount - 1` and `lastCommentId == commentId`).
 9. **User Collections & Story Subscriptions (`/users/{userId}/collections/{collectionId}` & `/users/{userId}/subscriptions/{storyId}`)**:
    - Strictly isolated under `/users/{userId}` with `isOwner(userId)` (`email_verified == true`), parent user doc existence verified on create/update, and `list` restricted by `existing().ownerUid == request.auth.uid`.
 
@@ -57,3 +58,4 @@
 16. **Inflating `kudosCount` or skipping batch write**: updating `kudosCount` by `+10`, creating `/kudos/{otherUid}`, supplying a malformed `anon_` token, or writing `/kudos/{kudoId}` without incrementing `kudosCount` in the same `WriteBatch` -> DENIED.
 17. **Commenting/kudoing on a private story or spoofing comment author**: creating a comment with `authorUid != request.auth.uid`, invalid `targetType`, or targeting a `publicStories` doc with `isPrivate == true` -> DENIED.
 18. **Deleting another reader's comment without being the story owner**: non-owner/non-author calling `delete` on `/publicStories/{publicId}/comments/{commentId}` -> DENIED.
+19. **Stand-alone `commentCount` +/-1 mutation without paired comment create/delete**: updating `commentCount` (or `commentCount` + `lastCommentId`) on `/publicStories/{publicId}` without atomically creating/deleting `/comments/{lastCommentId}` in the same `WriteBatch` -> DENIED.

@@ -624,6 +624,13 @@
           "description": "Most recent anonymous kudo ID written atomically in a batch.",
           "maxLength": 128
         },
+        "lastCommentId": {
+          "type": "string",
+          "description": "Most recent comment ID created or deleted atomically with commentCount in a batch.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"

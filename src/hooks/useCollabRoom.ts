@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { auth } from '../firebase';
 import { CollabParticipant } from '../types/story';
 
 interface UseCollabRoomOptions {
   collabId: string | null;
-  clientId: string;
-  displayName: string;
+  clientId?: string;
+  displayName?: string;
   enabled: boolean;
 }
+
+const NON_RETRYABLE_CLOSE_CODES = new Set([4400, 4401, 4403]);
 
 export function useCollabRoom({
   collabId,
@@ -17,6 +20,7 @@ export function useCollabRoom({
   const [participants, setParticipants] = useState<CollabParticipant[]>([]);
   const [lastActivity, setLastActivity] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -24,14 +28,34 @@ export function useCollabRoom({
       setParticipants([]);
       setLastActivity(null);
       setConnected(false);
+      setError(null);
       return;
     }
 
     let closed = false;
     let reconnectTimer: number | null = null;
 
-    const connect = () => {
+    const connect = async () => {
       if (closed) return;
+
+      const currentUser = auth?.currentUser;
+      if (!currentUser) {
+        setConnected(false);
+        setError('Sign in required for live collaboration.');
+        return;
+      }
+
+      let idToken = '';
+      try {
+        idToken = await currentUser.getIdToken();
+      } catch {
+        setConnected(false);
+        setError('Unable to verify collaboration session.');
+        return;
+      }
+
+      if (closed || !idToken) return;
+
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(`${protocol}//${window.location.host}/ws/collab`);
       wsRef.current = ws;
@@ -42,12 +66,12 @@ export function useCollabRoom({
           return;
         }
         setConnected(true);
+        setError(null);
         ws.send(
           JSON.stringify({
             type: 'join',
             collabId,
-            clientId,
-            displayName,
+            idToken,
           }),
         );
       };
@@ -55,6 +79,10 @@ export function useCollabRoom({
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(String(event.data)) as Record<string, unknown>;
+          if (msg.type === 'room:error' && typeof msg.error === 'string') {
+            setError(msg.error);
+            return;
+          }
           if (msg.collabId !== collabId) return;
 
           if (msg.type === 'room:presence' && Array.isArray(msg.participants)) {
@@ -69,10 +97,12 @@ export function useCollabRoom({
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         setConnected(false);
-        if (!closed) {
-          reconnectTimer = window.setTimeout(connect, 2500);
+        if (!closed && !NON_RETRYABLE_CLOSE_CODES.has(event.code)) {
+          reconnectTimer = window.setTimeout(() => {
+            void connect();
+          }, 2500);
         }
       };
 
@@ -81,7 +111,7 @@ export function useCollabRoom({
       };
     };
 
-    connect();
+    void connect();
 
     return () => {
       closed = true;
@@ -106,5 +136,6 @@ export function useCollabRoom({
     participants,
     lastActivity,
     sendActivity,
+    error,
   };
 }

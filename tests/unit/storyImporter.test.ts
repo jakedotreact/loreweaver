@@ -233,12 +233,103 @@ Arthur opened the **iron-bound** folio and examined the [map](https://example.co
     );
   });
 
-  it('blocks SSRF internal, localhost, metadata, and non-HTTP URLs', async () => {
+  it('blocks SSRF internal, localhost, metadata, IPv6-mapped, and non-HTTP URLs', async () => {
     await expect(validateAndResolveImportUrl('file:///etc/passwd')).rejects.toThrow(/Only http/i);
     await expect(validateAndResolveImportUrl('http://localhost:3000/secret')).rejects.toThrow(/not allowed/i);
+    await expect(validateAndResolveImportUrl('http://sub.localhost/secret')).rejects.toThrow(/not allowed/i);
     await expect(validateAndResolveImportUrl('http://127.0.0.1:8080/')).rejects.toThrow(/not allowed/i);
     await expect(validateAndResolveImportUrl('http://169.254.169.254/latest/meta-data/')).rejects.toThrow(/not allowed/i);
     await expect(validateAndResolveImportUrl('http://192.168.1.10/story.txt')).rejects.toThrow(/not allowed/i);
+    await expect(validateAndResolveImportUrl('http://[::1]:3000/secret')).rejects.toThrow(/not allowed/i);
+    await expect(validateAndResolveImportUrl('http://[::ffff:127.0.0.1]/secret')).rejects.toThrow(/not allowed/i);
+    await expect(validateAndResolveImportUrl('https://user:pass@example.com/story.md')).rejects.toThrow(/credentials/i);
+
+    // DNS rebinding / split-horizon check: public hostname resolving to private RFC1918 IP
+    await expect(
+      validateAndResolveImportUrl('https://public-story.example.com/work', {
+        dnsLookup: async () => [{ address: '10.0.0.5', family: 4 }],
+      }),
+    ).rejects.toThrow(/restricted internal network/i);
+  });
+
+  it('never fetches private, localhost, metadata, or non-HTTP targets reached via HTTP redirects', async () => {
+    const blockedTargets = [
+      'http://127.0.0.1:3000/api/health',
+      'http://localhost:3000/secret',
+      'http://169.254.169.254/latest/meta-data/',
+      'http://10.20.30.40/internal.txt',
+      'http://[::1]/secret',
+      'file:///etc/passwd',
+    ];
+
+    for (const target of blockedTargets) {
+      const requestedUrls: Array<{ url: string; redirectMode: string | undefined }> = [];
+      const mockFetch: typeof fetch = async (input, init) => {
+        const urlStr = String(input);
+        requestedUrls.push({ url: urlStr, redirectMode: init?.redirect });
+        if (urlStr.startsWith('https://example.com/')) {
+          return new Response(null, {
+            status: 302,
+            headers: { location: target },
+          });
+        }
+        throw new Error(`SSRF redirect destination was fetched: ${urlStr}`);
+      };
+
+      await expect(
+        importStoryFromUrl({
+          url: 'https://example.com/start',
+          fetcher: mockFetch,
+          skipDnsLookup: true,
+        }),
+      ).rejects.toThrow(/not allowed|Only http/i);
+
+      expect(requestedUrls).toEqual([
+        { url: 'https://example.com/start', redirectMode: 'manual' },
+      ]);
+    }
+  });
+
+  it('aborts excessive redirect chains after 5 hops while allowing safe public redirects', async () => {
+    let hop = 0;
+    const loopFetch: typeof fetch = async () => {
+      hop += 1;
+      return new Response(null, {
+        status: 302,
+        headers: { location: `https://example.com/step-${hop}` },
+      });
+    };
+
+    await expect(
+      importStoryFromUrl({
+        url: 'https://example.com/step-0',
+        fetcher: loopFetch,
+        skipDnsLookup: true,
+      }),
+    ).rejects.toThrow(/Too many redirects/i);
+    expect(hop).toBe(6); // initial + 5 redirects max before aborting on the 6th
+
+    const publicRedirectFetch: typeof fetch = async (input) => {
+      const urlStr = String(input);
+      if (urlStr === 'https://example.com/old-path') {
+        return new Response(null, {
+          status: 301,
+          headers: { location: 'https://example.com/new-path.md' },
+        });
+      }
+      return new Response('# Redirected Tale\n\nSafe arrival.\n', {
+        status: 200,
+        headers: { 'content-type': 'text/markdown; charset=utf-8' },
+      });
+    };
+
+    const okResult = await importStoryFromUrl({
+      url: 'https://example.com/old-path',
+      fetcher: publicRedirectFetch,
+      skipDnsLookup: true,
+      options: { enrichWithAi: false },
+    });
+    expect(okResult.project.title).toBe('Redirected Tale');
   });
 
   it('parses # Story Title, ## Chapter Title, and ### Scene Title consistently in both .txt and .md', async () => {

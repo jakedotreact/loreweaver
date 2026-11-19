@@ -236,7 +236,7 @@ export async function listAvailableModels(): Promise<{
 }
 
 export function formatGeminiError(err: unknown, fallback: string): string {
-  const raw = err instanceof Error ? err.message : String(err || fallback);
+  const raw = err instanceof Error ? err.message : String(err || '');
   if (/API_KEY_INVALID|PERMISSION_DENIED|403|401/i.test(raw)) {
     return 'Gemini API key is missing or unauthorized. Check your GEMINI_API_KEY in Settings > Secrets.';
   }
@@ -246,7 +246,13 @@ export function formatGeminiError(err: unknown, fallback: string): string {
   if (/NOT_FOUND|404/i.test(raw)) {
     return 'Requested Gemini model was not found. Switch to Gemini 4 Hydrogen or Gemini 3.1 Flash Lite in Model Settings.';
   }
-  return raw || fallback;
+  if (/ETIMEDOUT|ECONNRESET|timeout|timed out|504|DEADLINE_EXCEEDED/i.test(raw)) {
+    return 'Upstream AI generation timed out. Please retry in a moment.';
+  }
+  if (/GEMINI_API_KEY is not configured/i.test(raw)) {
+    return 'Server AI credentials are not configured.';
+  }
+  return fallback;
 }
 
 function getClient(apiVersion?: string): GoogleGenAI {

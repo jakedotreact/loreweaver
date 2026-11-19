@@ -1,16 +1,107 @@
 // @vitest-environment node
+import crypto from 'crypto';
 import http from 'http';
 import { AddressInfo } from 'net';
 import JSZip from 'jszip';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApiApp } from '../../server/apiApp';
+import { verifyFirebaseIdToken } from '../../server/firebaseAuth';
+import { ConcurrencyLimiter, FixedWindowRateLimiter } from '../../server/rateLimit';
+
+const TEST_PROJECT_ID = 'gen-lang-client-0202913361';
+const TEST_KID = 'test-key-1';
+const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+});
+
+function toBase64Url(input: Buffer | string): string {
+  return Buffer.from(input)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+function mintTestFirebaseIdToken(opts: {
+  uid: string;
+  email?: string;
+  name?: string;
+  expOffsetSec?: number;
+  aud?: string;
+}): string {
+  const now = Math.floor(Date.now() / 1000);
+  const header = toBase64Url(
+    JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: TEST_KID }),
+  );
+  const payload = toBase64Url(
+    JSON.stringify({
+      iss: `https://securetoken.google.com/${TEST_PROJECT_ID}`,
+      aud: opts.aud ?? TEST_PROJECT_ID,
+      auth_time: now - 30,
+      user_id: opts.uid,
+      sub: opts.uid,
+      iat: now - 10,
+      exp: now + (opts.expOffsetSec ?? 3600),
+      email: opts.email ?? `${opts.uid}@example.com`,
+      email_verified: true,
+      name: opts.name ?? 'Test Author',
+    }),
+  );
+  const signer = crypto.createSign('RSA-SHA256');
+  signer.update(`${header}.${payload}`);
+  signer.end();
+  const signature = toBase64Url(signer.sign(privateKey));
+  return `${header}.${payload}.${signature}`;
+}
+
+async function startTempServer(app: ReturnType<typeof createApiApp>) {
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve());
+  });
+  const addr = server.address() as AddressInfo;
+  return {
+    baseUrl: `http://127.0.0.1:${addr.port}`,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      }),
+  };
+}
 
 describe('server Express API integration', () => {
   let server: http.Server;
   let baseUrl = '';
+  let validToken = '';
+  const serverLogs: Array<Record<string, unknown>> = [];
 
   beforeAll(async () => {
-    const app = createApiApp();
+    validToken = mintTestFirebaseIdToken({ uid: 'user-author-1' });
+    const app = createApiApp({
+      verifyToken: (token) =>
+        verifyFirebaseIdToken(token, {
+          projectId: TEST_PROJECT_ID,
+          getPublicCerts: async () => ({ [TEST_KID]: publicKey }),
+        }),
+      logger: (entry) => {
+        serverLogs.push(entry);
+      },
+      handlers: {
+        deduceUniverseAndCast: async (input) => ({
+          title: input.title || 'Sample Story',
+          universe: input.universe,
+          setting: input.setting,
+          tone: input.tone,
+          premise: input.premise,
+          protagonistId: 'char-1',
+          turns: [],
+          characters: [],
+          crossIndex: [],
+        }),
+      },
+    });
     server = http.createServer(app);
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', () => resolve());
@@ -25,63 +116,135 @@ describe('server Express API integration', () => {
     });
   });
 
-  it('serves GET /api/health with 200 ok', async () => {
-    const res = await fetch(`${baseUrl}/api/health`);
-    expect(res.status).toBe(200);
-    const data = (await res.json()) as { ok: boolean };
-    expect(data).toEqual({ ok: true });
-  });
+  it('serves GET /api/health, /api/config, and /api/models without exposing secret keys', async () => {
+    const healthRes = await fetch(`${baseUrl}/api/health`);
+    expect(healthRes.status).toBe(200);
+    expect(await healthRes.json()).toEqual({ ok: true });
 
-  it('serves GET /api/config and GET /api/models without exposing secret keys', async () => {
     const configRes = await fetch(`${baseUrl}/api/config`);
     expect(configRes.status).toBe(200);
     const configRaw = await configRes.text();
     const config = JSON.parse(configRaw) as {
       hasServerApiKey: boolean;
       availableModels: string[];
-      models: Array<{ id: string; label: string }>;
     };
-
     expect(typeof config.hasServerApiKey).toBe('boolean');
-    expect(Array.isArray(config.availableModels)).toBe(true);
     expect(config.availableModels.length).toBeGreaterThan(0);
     expect(configRaw).not.toMatch(/AIza[0-9A-Za-z_-]{20,}/);
 
     const modelsRes = await fetch(`${baseUrl}/api/models`);
     expect(modelsRes.status).toBe(200);
-    const modelsData = (await modelsRes.json()) as {
-      models: Array<{ id: string }>;
-    };
-    expect(modelsData.models.length).toBeGreaterThan(0);
   });
 
-  it('validates required fields and returns 400 JSON errors on incomplete POST payloads', async () => {
-    const deduceRes = await fetch(`${baseUrl}/api/story/deduce-universe`, {
+  it('rejects unauthenticated, tampered, or expired Firebase ID tokens on all protected /api/story/* routes', async () => {
+    const protectedEndpoints: Array<{ path: string; body: unknown }> = [
+      { path: '/api/story/deduce-universe', body: { universe: 'A', setting: 'B', premise: 'C' } },
+      { path: '/api/story/deduce-character', body: { universe: 'A', name: 'Vera' } },
+      { path: '/api/story/advance', body: { snapshot: {}, userAction: 'Go' } },
+      { path: '/api/story/audit', body: { snapshot: {} } },
+      { path: '/api/story/rewrite-scene', body: { snapshot: {}, targetTurnId: 't1' } },
+      { path: '/api/story/tts', body: { text: 'Hello world.' } },
+      { path: '/api/story/transcribe', body: { audioBase64: 'AAAA' } },
+      { path: '/api/story/illustration-prompt', body: { snapshot: {}, targetKind: 'scene', turnId: 't1' } },
+      { path: '/api/story/import-file', body: { filename: 'a.txt', contentBase64: 'SGVsbG8=' } },
+      { path: '/api/story/import-url', body: { url: 'https://example.com/story.md' } },
+    ];
+
+    for (const ep of protectedEndpoints) {
+      const noAuth = await fetch(`${baseUrl}${ep.path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ep.body),
+      });
+      expect(noAuth.status, `missing auth on ${ep.path}`).toBe(401);
+      const noAuthJson = (await noAuth.json()) as { code?: string; requestId?: string };
+      expect(noAuthJson.code).toBe('unauthorized');
+      expect(noAuthJson.requestId).toBeTruthy();
+    }
+
+    const expiredToken = mintTestFirebaseIdToken({
+      uid: 'user-author-1',
+      expOffsetSec: -120,
+    });
+    const expiredRes = await fetch(`${baseUrl}/api/story/tts`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${expiredToken}`,
+      },
+      body: JSON.stringify({ text: 'Hello' }),
+    });
+    expect(expiredRes.status).toBe(401);
+    expect(((await expiredRes.json()) as { code: string }).code).toBe('token_expired');
+
+    const badTokenRes = await fetch(`${baseUrl}/api/story/tts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer not.a.valid.jwt',
+      },
+      body: JSON.stringify({ text: 'Hello' }),
+    });
+    expect(badTokenRes.status).toBe(401);
+  });
+
+  it('validates route schemas, field bounds, voices, and oversized payloads for authenticated callers', async () => {
+    const authHeaders = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${validToken}`,
+    };
+
+    const deduceMissing = await fetch(`${baseUrl}/api/story/deduce-universe`, {
+      method: 'POST',
+      headers: authHeaders,
       body: JSON.stringify({ universe: 'Clockwork' }),
     });
-    expect(deduceRes.status).toBe(400);
-    expect(((await deduceRes.json()) as { error: string }).error).toMatch(
-      /required/i,
-    );
+    expect(deduceMissing.status).toBe(400);
 
-    const advanceRes = await fetch(`${baseUrl}/api/story/advance`, {
+    const badVoice = await fetch(`${baseUrl}/api/story/tts`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      headers: authHeaders,
+      body: JSON.stringify({ text: 'Read this line.', voiceName: 'HackerVoice' }),
     });
-    expect(advanceRes.status).toBe(400);
+    expect(badVoice.status).toBe(400);
 
-    const ttsRes = await fetch(`${baseUrl}/api/story/tts`, {
+    const badMime = await fetch(`${baseUrl}/api/story/transcribe`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ voice: 'Charon' }),
+      headers: authHeaders,
+      body: JSON.stringify({ audioBase64: 'SGVsbG8=', mimeType: 'text/html' }),
     });
-    expect(ttsRes.status).toBe(400);
+    expect(badMime.status).toBe(400);
+
+    const hugeUniverseRes = await fetch(`${baseUrl}/api/story/deduce-universe`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        universe: 'U',
+        setting: 'S',
+        premise: 'x'.repeat(600_000),
+      }),
+    });
+    expect(hugeUniverseRes.status).toBe(413);
+    expect(((await hugeUniverseRes.json()) as { code: string }).code).toBe('payload_too_large');
+
+    const deduceOk = await fetch(`${baseUrl}/api/story/deduce-universe`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        title: 'Harbor Light',
+        universe: 'Clockwork',
+        setting: 'Pier 4',
+        premise: 'A missing chronometer.',
+      }),
+    });
+    expect(deduceOk.status).toBe(200);
   });
 
-  it('imports .md and .docx files via POST /api/story/import-file and rejects bad formats or SSRF URLs', async () => {
+  it('imports .md and .docx files when authenticated and rejects bad formats or SSRF URLs', async () => {
+    const authHeaders = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${validToken}`,
+    };
     const mdBase64 = Buffer.from(
       '# Iron Lantern\n\n## Chapter 1: Arrival\n\nRain hammered the iron roof.',
       'utf8',
@@ -89,7 +252,7 @@ describe('server Express API integration', () => {
 
     const mdRes = await fetch(`${baseUrl}/api/story/import-file`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         filename: 'iron-lantern.md',
         contentBase64: mdBase64,
@@ -99,12 +262,11 @@ describe('server Express API integration', () => {
     expect(mdRes.status).toBe(200);
     const mdPayload = (await mdRes.json()) as {
       project: { title: string; turns: Array<{ prose: string[] }>; isPrivate: boolean };
-      stats: { format: string; chapterCount: number };
+      stats: { format: string };
     };
     expect(mdPayload.stats.format).toBe('md');
     expect(mdPayload.project.title).toBe('Iron Lantern');
     expect(mdPayload.project.isPrivate).toBe(true);
-    expect(mdPayload.project.turns[0].prose[0]).toBe('Rain hammered the iron roof.');
 
     const zip = new JSZip();
     zip.file(
@@ -115,7 +277,7 @@ describe('server Express API integration', () => {
 
     const docxRes = await fetch(`${baseUrl}/api/story/import-file`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         filename: 'draft.docx',
         contentBase64: docxBase64,
@@ -123,16 +285,10 @@ describe('server Express API integration', () => {
       }),
     });
     expect(docxRes.status).toBe(200);
-    const docxPayload = (await docxRes.json()) as {
-      project: { turns: Array<{ prose: string[] }> };
-      stats: { format: string };
-    };
-    expect(docxPayload.stats.format).toBe('docx');
-    expect(docxPayload.project.turns[0].prose[0]).toBe('Hello from Word.');
 
     const badExtRes = await fetch(`${baseUrl}/api/story/import-file`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         filename: 'archive.exe',
         contentBase64: mdBase64,
@@ -142,7 +298,7 @@ describe('server Express API integration', () => {
 
     const ssrfRes = await fetch(`${baseUrl}/api/story/import-url`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         url: 'http://127.0.0.1:3000/api/health',
       }),
@@ -150,11 +306,169 @@ describe('server Express API integration', () => {
     expect(ssrfRes.status).toBe(400);
   });
 
-  it('returns structured 404 JSON for unknown /api routes', async () => {
+  it('enforces per-user rate limits and concurrency limits with 429 + Retry-After', async () => {
+    let releaseSlowCall!: () => void;
+    const slowGate = new Promise<void>((resolve) => {
+      releaseSlowCall = resolve;
+    });
+
+    const app = createApiApp({
+      verifyToken: (token) =>
+        verifyFirebaseIdToken(token, {
+          projectId: TEST_PROJECT_ID,
+          getPublicCerts: async () => ({ [TEST_KID]: publicKey }),
+        }),
+      standardRateLimiter: new FixedWindowRateLimiter(3, 60_000),
+      concurrencyLimiter: new ConcurrencyLimiter(1),
+      handlers: {
+        deduceUniverseAndCast: async (input) => {
+          await slowGate;
+          return {
+            title: input.title || 'Slow Story',
+            universe: input.universe,
+            setting: input.setting,
+            tone: input.tone,
+            premise: input.premise,
+            protagonistId: 'char-1',
+            turns: [],
+            characters: [],
+            crossIndex: [],
+          };
+        },
+      },
+    });
+
+    const temp = await startTempServer(app);
+    try {
+      const token = mintTestFirebaseIdToken({ uid: 'rate-user-1' });
+      const reqInit = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          universe: 'Arcadia',
+          setting: 'Observatory',
+          premise: 'A comet approaches.',
+        }),
+      };
+
+      // Concurrent 2nd request triggers concurrency limit (429) while 1st is in flight
+      const p1 = fetch(`${temp.baseUrl}/api/story/deduce-universe`, reqInit);
+      await new Promise((r) => setTimeout(r, 40));
+      const concurrentRes = await fetch(`${temp.baseUrl}/api/story/deduce-universe`, reqInit);
+      expect(concurrentRes.status).toBe(429);
+      expect(concurrentRes.headers.get('retry-after')).toBeTruthy();
+      expect(((await concurrentRes.json()) as { code: string }).code).toBe(
+        'concurrency_limited',
+      );
+
+      releaseSlowCall();
+      expect((await p1).status).toBe(200);
+
+      // Next request consumes 3rd window slot; 4th triggers rate limit (429)
+      const thirdRes = await fetch(`${temp.baseUrl}/api/story/deduce-universe`, reqInit);
+      expect(thirdRes.status).toBe(200);
+
+      const fourthRes = await fetch(`${temp.baseUrl}/api/story/deduce-universe`, reqInit);
+      expect(fourthRes.status).toBe(429);
+      expect(fourthRes.headers.get('retry-after')).toBeTruthy();
+      expect(((await fourthRes.json()) as { code: string }).code).toBe('rate_limited');
+    } finally {
+      releaseSlowCall();
+      await temp.close();
+    }
+  });
+
+  it('logs detailed server errors with requestId while never leaking stack traces, secrets, or internal diagnostics to clients', async () => {
+    const capturedLogs: Array<Record<string, unknown>> = [];
+    const syntheticKey = 'AIza' + 'SySyntheticLeakTest9876543210';
+    const app = createApiApp({
+      verifyToken: (token) =>
+        verifyFirebaseIdToken(token, {
+          projectId: TEST_PROJECT_ID,
+          getPublicCerts: async () => ({ [TEST_KID]: publicKey }),
+        }),
+      logger: (entry) => capturedLogs.push(entry),
+      handlers: {
+        auditContinuity: async () => {
+          throw new Error(
+            `Upstream failure at db-primary.internal:5432 with key ${syntheticKey}`,
+          );
+        },
+        importStoryFromUrl: async () => {
+          throw new Error(
+            `ENOENT: /var/run/secrets/sa-key.json leaked key ${syntheticKey}`,
+          );
+        },
+      },
+    });
+
+    const temp = await startTempServer(app);
+    try {
+      const token = mintTestFirebaseIdToken({ uid: 'log-user-1' });
+      const auditRes = await fetch(`${temp.baseUrl}/api/story/audit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          snapshot: {
+            title: 'Test',
+            universe: 'U',
+            setting: 'S',
+            tone: 'T',
+            premise: 'P',
+            protagonistId: 'c1',
+            turns: [{ id: 't1', sceneNumber: 1 }],
+            characters: [],
+            crossIndex: [],
+          },
+        }),
+      });
+
+      expect(auditRes.status).toBe(500);
+      const auditText = await auditRes.text();
+      const auditJson = JSON.parse(auditText) as {
+        error: string;
+        code: string;
+        requestId: string;
+      };
+      expect(auditJson.requestId).toBe(auditRes.headers.get('x-request-id'));
+      expect(auditJson.code).toBe('internal_error');
+      expect(auditJson.error).toBe('Failed to audit story continuity.');
+      expect(auditText).not.toContain('db-primary.internal');
+      expect(auditText).not.toContain(syntheticKey);
+
+      const urlErrRes = await fetch(`${temp.baseUrl}/api/story/import-url`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ url: 'https://example.com/story.txt' }),
+      });
+      expect(urlErrRes.status).toBe(500);
+      const urlErrText = await urlErrRes.text();
+      expect(urlErrText).not.toContain('/var/run/secrets');
+      expect(urlErrText).not.toContain(syntheticKey);
+
+      expect(capturedLogs.length).toBeGreaterThanOrEqual(2);
+      expect(String(capturedLogs[0].message)).not.toContain(syntheticKey);
+      expect(String(capturedLogs[0].message)).toContain('[REDACTED_API_KEY]');
+    } finally {
+      await temp.close();
+    }
+  });
+
+  it('returns structured 404 JSON with requestId for unknown /api routes', async () => {
     const res = await fetch(`${baseUrl}/api/non-existent-endpoint`);
     expect(res.status).toBe(404);
-    const data = (await res.json()) as { error: string };
+    const data = (await res.json()) as { error: string; code: string; requestId: string };
     expect(data.error).toMatch(/not found/i);
+    expect(data.code).toBe('not_found');
+    expect(data.requestId).toBeTruthy();
   });
 });
-

@@ -1681,7 +1681,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           commentPayload.parentCommentId = payload.parentCommentId.trim();
         }
         batch.set(commentRef, commentPayload);
-        batch.update(storyRef, { commentCount: currentCount + 1 });
+        batch.update(storyRef, {
+          commentCount: currentCount + 1,
+          lastCommentId: commentId,
+        });
         await batch.commit();
 
         const now = Date.now();
@@ -1727,7 +1730,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             : 1;
         const batch = writeBatch(db);
         batch.delete(commentRef);
-        batch.update(storyRef, { commentCount: Math.max(0, currentCount - 1) });
+        batch.update(storyRef, {
+          commentCount: Math.max(0, currentCount - 1),
+          lastCommentId: trimmedComment,
+        });
         await batch.commit();
       } catch (err) {
         setSyncError('Failed to delete comment in Firestore.');

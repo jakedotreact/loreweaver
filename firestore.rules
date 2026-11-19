@@ -256,6 +256,7 @@ service cloud.firestore {
           'kudosCount',
           'commentCount',
           'lastKudoId',
+          'lastCommentId',
           'createdAt',
           'updatedAt'
         ])
@@ -298,6 +299,7 @@ service cloud.firestore {
         && data.commentCount is int
         && data.commentCount >= 0
         && (!('lastKudoId' in data) || isValidId(data.lastKudoId))
+        && (!('lastCommentId' in data) || isValidId(data.lastCommentId))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -939,11 +941,28 @@ service cloud.firestore {
           (
             isSignedIn()
             && existing().isPrivate == false
-            && incoming().diff(existing()).affectedKeys().hasOnly(['commentCount'])
+            && incoming().diff(existing()).affectedKeys().hasOnly(['commentCount', 'lastCommentId'])
+            && isValidId(incoming().lastCommentId)
             && incoming().commentCount is int
+            && incoming().commentCount == existing().commentCount + 1
+            && !exists(/databases/$(database)/documents/publicStories/$(publicId)/comments/$(incoming().lastCommentId))
+            && existsAfter(/databases/$(database)/documents/publicStories/$(publicId)/comments/$(incoming().lastCommentId))
+            && getAfter(/databases/$(database)/documents/publicStories/$(publicId)/comments/$(incoming().lastCommentId)).data.authorUid == request.auth.uid
+          )
+          ||
+          (
+            isSignedIn()
+            && existing().isPrivate == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['commentCount', 'lastCommentId'])
+            && isValidId(incoming().lastCommentId)
+            && incoming().commentCount is int
+            && existing().commentCount > 0
+            && incoming().commentCount == existing().commentCount - 1
+            && exists(/databases/$(database)/documents/publicStories/$(publicId)/comments/$(incoming().lastCommentId))
+            && !existsAfter(/databases/$(database)/documents/publicStories/$(publicId)/comments/$(incoming().lastCommentId))
             && (
-              incoming().commentCount == existing().commentCount + 1 ||
-              (existing().commentCount > 0 && incoming().commentCount == existing().commentCount - 1)
+              get(/databases/$(database)/documents/publicStories/$(publicId)/comments/$(incoming().lastCommentId)).data.authorUid == request.auth.uid ||
+              existing().ownerUid == request.auth.uid
             )
           )
         );
@@ -991,6 +1010,7 @@ service cloud.firestore {
           && incoming().updatedAt == request.time
           && get(/databases/$(database)/documents/publicStories/$(publicId)).data.isPrivate == false
           && getAfter(/databases/$(database)/documents/publicStories/$(publicId)).data.commentCount == get(/databases/$(database)/documents/publicStories/$(publicId)).data.commentCount + 1
+          && getAfter(/databases/$(database)/documents/publicStories/$(publicId)).data.lastCommentId == commentId
           && exists(/databases/$(database)/documents/users/$(request.auth.uid));
         allow update: if isValidId(publicId)
           && isValidId(commentId)
@@ -1010,7 +1030,8 @@ service cloud.firestore {
             existing().authorUid == request.auth.uid ||
             get(/databases/$(database)/documents/publicStories/$(publicId)).data.ownerUid == request.auth.uid
           )
-          && getAfter(/databases/$(database)/documents/publicStories/$(publicId)).data.commentCount == get(/databases/$(database)/documents/publicStories/$(publicId)).data.commentCount - 1;
+          && getAfter(/databases/$(database)/documents/publicStories/$(publicId)).data.commentCount == get(/databases/$(database)/documents/publicStories/$(publicId)).data.commentCount - 1
+          && getAfter(/databases/$(database)/documents/publicStories/$(publicId)).data.lastCommentId == commentId;
       }
     }
   }
