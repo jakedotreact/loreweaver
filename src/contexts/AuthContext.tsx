@@ -50,6 +50,7 @@ import {
 } from '../types/story';
 import { countStoryWords, normalizeStoryTags } from '../utils/ao3Tags';
 import {
+  sanitizeAuthorNote,
   stripChaptersForCloud,
   stripSavePointsForCloud,
   stripTagsForCloud,
@@ -240,6 +241,8 @@ function parseSharedWorkDoc(id: string, data: Record<string, unknown>): SharedWo
     tone: String(data.tone || ''),
     premise: String(data.premise || ''),
     summary: String(data.summary || ''),
+    prefixNote: sanitizeAuthorNote(typeof data.prefixNote === 'string' ? data.prefixNote : undefined),
+    suffixNote: sanitizeAuthorNote(typeof data.suffixNote === 'string' ? data.suffixNote : undefined),
     turns: data.turns as StoryTurn[],
     chapters: Array.isArray(data.chapters) ? (data.chapters as StoryChapter[]) : [],
     characters: Array.isArray(data.characters)
@@ -270,6 +273,8 @@ function parseCollaborationDoc(
     setting: String(data.setting || ''),
     tone: String(data.tone || ''),
     premise: String(data.premise || ''),
+    prefixNote: sanitizeAuthorNote(typeof data.prefixNote === 'string' ? data.prefixNote : undefined),
+    suffixNote: sanitizeAuthorNote(typeof data.suffixNote === 'string' ? data.suffixNote : undefined),
     protagonistId: String(data.protagonistId || ''),
     turns: data.turns as StoryTurn[],
     characters: Array.isArray(data.characters)
@@ -336,6 +341,8 @@ function parsePublicStoryDoc(
     setting: String(data.setting || ''),
     tone,
     premise: String(data.premise || ''),
+    prefixNote: sanitizeAuthorNote(typeof data.prefixNote === 'string' ? data.prefixNote : undefined),
+    suffixNote: sanitizeAuthorNote(typeof data.suffixNote === 'string' ? data.suffixNote : undefined),
     isPrivate: Boolean(data.isPrivate),
     tags,
     turns,
@@ -706,6 +713,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             setting: String(d.setting || ''),
             tone: String(d.tone || ''),
             premise: String(d.premise || ''),
+            prefixNote: sanitizeAuthorNote(typeof d.prefixNote === 'string' ? d.prefixNote : undefined),
+            suffixNote: sanitizeAuthorNote(typeof d.suffixNote === 'string' ? d.suffixNote : undefined),
             protagonistId: String(d.protagonistId || ''),
             turns: d.turns as StoryTurn[],
             characters: d.characters,
@@ -766,6 +775,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           setting: (story.setting || '').slice(0, 400),
           tone: (story.tone || '').slice(0, 200),
           premise: (story.premise || '').slice(0, 4000),
+          prefixNote: sanitizeAuthorNote(story.prefixNote) ?? '',
+          suffixNote: sanitizeAuthorNote(story.suffixNote) ?? '',
           protagonistId: (story.protagonistId || '').slice(0, 128),
           turns: baseTurns,
           characters: safeCharacters,
@@ -885,6 +896,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       let targetId = '';
       let workTitle = (input.story.title || 'Untitled Story').slice(0, 200);
       let summary = '';
+      let sharePrefixNote = sanitizeAuthorNote(input.story.prefixNote);
+      let shareSuffixNote = sanitizeAuthorNote(input.story.suffixNote);
       let rawTurns: StoryTurn[] = input.story.turns;
       let rawChapters: StoryChapter[] = input.story.chapters ?? [];
 
@@ -895,6 +908,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         targetId = input.chapter.id.slice(0, 128);
         workTitle = `Chapter ${String(input.chapter.chapterNumber).padStart(2, '0')} — ${input.chapter.title}`.slice(0, 200);
         summary = (input.chapter.summary || '').slice(0, 1000);
+        sharePrefixNote = sanitizeAuthorNote(input.chapter.prefixNote);
+        shareSuffixNote = sanitizeAuthorNote(input.chapter.suffixNote);
         const turnMap = new Map(input.story.turns.map((t) => [t.id, t]));
         const chapterTurns = input.chapter.turnIds
           .map((id) => turnMap.get(id))
@@ -910,6 +925,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         }
         targetId = input.turn.id.slice(0, 128);
         workTitle = `Scene ${String(input.turn.turnNumber).padStart(2, '0')} — ${input.turn.sceneTitle}`.slice(0, 200);
+        sharePrefixNote = sanitizeAuthorNote(input.turn.prefixNote);
+        shareSuffixNote = sanitizeAuthorNote(input.turn.suffixNote);
         rawTurns = [input.turn];
         rawChapters = [];
       }
@@ -950,6 +967,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             tone: (input.story.tone || '').slice(0, 200),
             premise: (input.story.premise || '').slice(0, 4000),
             summary,
+            prefixNote: sharePrefixNote ?? '',
+            suffixNote: shareSuffixNote ?? '',
             turns: safeTurns,
             chapters: safeChapters,
             characters: safeCharacters,
@@ -970,6 +989,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             tone: (input.story.tone || '').slice(0, 200),
             premise: (input.story.premise || '').slice(0, 4000),
             summary,
+            prefixNote: sharePrefixNote ?? '',
+            suffixNote: shareSuffixNote ?? '',
             turns: safeTurns,
             chapters: safeChapters,
             characters: safeCharacters,
@@ -994,6 +1015,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           tone: (input.story.tone || '').slice(0, 200),
           premise: (input.story.premise || '').slice(0, 4000),
           summary,
+          prefixNote: sharePrefixNote,
+          suffixNote: shareSuffixNote,
           turns: safeTurns,
           chapters: safeChapters,
           characters: safeCharacters,
@@ -1137,6 +1160,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             setting: (story.setting || '').slice(0, 400),
             tone: (story.tone || '').slice(0, 200),
             premise: (story.premise || '').slice(0, 4000),
+            prefixNote: sanitizeAuthorNote(story.prefixNote) ?? '',
+            suffixNote: sanitizeAuthorNote(story.suffixNote) ?? '',
             protagonistId: (story.protagonistId || '').slice(0, 128),
             turns: safeTurns,
             characters: safeCharacters,
@@ -1159,6 +1184,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             setting: (story.setting || '').slice(0, 400),
             tone: (story.tone || '').slice(0, 200),
             premise: (story.premise || '').slice(0, 4000),
+            prefixNote: sanitizeAuthorNote(story.prefixNote) ?? '',
+            suffixNote: sanitizeAuthorNote(story.suffixNote) ?? '',
             protagonistId: (story.protagonistId || '').slice(0, 128),
             turns: safeTurns,
             characters: safeCharacters,
@@ -1336,6 +1363,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           setting: (story.setting || '').slice(0, 400),
           tone: (story.tone || '').slice(0, 200),
           premise: (story.premise || '').slice(0, 4000),
+          prefixNote: sanitizeAuthorNote(story.prefixNote) ?? '',
+          suffixNote: sanitizeAuthorNote(story.suffixNote) ?? '',
           protagonistId: (story.protagonistId || '').slice(0, 128),
           turns: safeTurns,
           characters: safeCharacters,
@@ -1447,6 +1476,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             setting: (story.setting || '').slice(0, 400),
             tone: (story.tone || '').slice(0, 200),
             premise: (story.premise || '').slice(0, 4000),
+            prefixNote: sanitizeAuthorNote(story.prefixNote) ?? '',
+            suffixNote: sanitizeAuthorNote(story.suffixNote) ?? '',
             isPrivate,
             tags: safeTags,
             turns: safeTurns,
@@ -1466,6 +1497,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             setting: (story.setting || '').slice(0, 400),
             tone: (story.tone || '').slice(0, 200),
             premise: (story.premise || '').slice(0, 4000),
+            prefixNote: sanitizeAuthorNote(story.prefixNote),
+            suffixNote: sanitizeAuthorNote(story.suffixNote),
             isPrivate,
             tags: safeTags,
             turns: safeTurns,
@@ -1493,6 +1526,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           setting: (story.setting || '').slice(0, 400),
           tone: (story.tone || '').slice(0, 200),
           premise: (story.premise || '').slice(0, 4000),
+          prefixNote: sanitizeAuthorNote(story.prefixNote) ?? '',
+          suffixNote: sanitizeAuthorNote(story.suffixNote) ?? '',
           isPrivate: false,
           tags: safeTags,
           turns: safeTurns,
@@ -1515,6 +1550,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           setting: (story.setting || '').slice(0, 400),
           tone: (story.tone || '').slice(0, 200),
           premise: (story.premise || '').slice(0, 4000),
+          prefixNote: sanitizeAuthorNote(story.prefixNote),
+          suffixNote: sanitizeAuthorNote(story.suffixNote),
           isPrivate: false,
           tags: safeTags,
           turns: safeTurns,

@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Search,
   Sparkles,
+  Upload,
 } from 'lucide-react';
 import {
   Ao3Category,
@@ -52,6 +53,7 @@ interface LandingPageProps {
   onOpenStory: (storyId: string) => void;
   onEnterStudio: () => void;
   onOpenNewStory: () => void;
+  onImportStory?: () => void;
   externalFilter?: StoryIndexFilter | null;
   onConsumeExternalFilter?: () => void;
 }
@@ -69,6 +71,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onOpenStory,
   onEnterStudio,
   onOpenNewStory,
+  onImportStory,
 }) => {
   const [shelfTab, setShelfTab] = useState<DiscoverShelfTab>('index');
   const [openCollectCardId, setOpenCollectCardId] = useState<string | null>(null);
@@ -208,6 +211,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <Sparkles className="w-4 h-4" />
                 Start New Work
               </button>
+              {onImportStory && (
+                <button
+                  type="button"
+                  onClick={onImportStory}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-sm font-medium text-[#374151] hover:text-[#1D4ED8] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <Upload className="w-4 h-4" />
+                  Import URL / File
+                </button>
+              )}
             </div>
           </div>
 

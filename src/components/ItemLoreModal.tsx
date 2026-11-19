@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, BookOpen, ChevronDown, ChevronUp, ExternalLink, X } from 'lucide-react';
+import { useModalScrollLock } from '../hooks/useModalScrollLock';
 import {
   CharacterProfile,
   CrossIndexCategory,
@@ -66,6 +67,8 @@ export const ItemLoreModal: React.FC<ItemLoreModalProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [target, onClose]);
+
+  useModalScrollLock(Boolean(target));
 
   const analysis = useMemo(() => {
     if (!target) return null;
@@ -239,7 +242,7 @@ export const ItemLoreModal: React.FC<ItemLoreModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-hidden overscroll-contain"
       role="dialog"
       aria-modal="true"
       aria-labelledby="item-lore-heading"
@@ -247,7 +250,7 @@ export const ItemLoreModal: React.FC<ItemLoreModalProps> = ({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-3xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden my-auto max-h-[90vh] flex flex-col">
+      <div className="w-full max-w-3xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Sticky Header */}
         <div className="px-6 py-4 border-b border-neutral-200 flex items-start justify-between gap-4 shrink-0">
           <div className="flex items-start gap-3 min-w-0">
@@ -275,7 +278,7 @@ export const ItemLoreModal: React.FC<ItemLoreModalProps> = ({
         </div>
 
         {/* Scrollable Content */}
-        <div className="p-6 space-y-8 overflow-y-auto flex-1">
+        <div className="p-6 space-y-8 overflow-y-auto overscroll-contain flex-1 min-h-0">
           {/* Chapter Summary if applicable */}
           {target.kind === 'chapter' && target.chapter.summary && (
             <section className="pb-5 border-b border-neutral-100">

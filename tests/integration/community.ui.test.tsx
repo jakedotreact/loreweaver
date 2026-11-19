@@ -1,16 +1,71 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../src/contexts/AuthContext', () => ({
+  useAuth: () => ({
+    firebaseConfigured: false,
+    user: null,
+    authReady: true,
+    isSigningIn: false,
+    authError: null,
+    userSettings: null,
+    settingsLoaded: true,
+    syncError: null,
+    signInWithGoogle: vi.fn(async () => {}),
+    signOutUser: vi.fn(async () => {}),
+    updateUserSettings: vi.fn(async () => {}),
+    clearAuthError: vi.fn(),
+    clearSyncError: vi.fn(),
+  }),
+  formatReadableFirestoreError: (err: unknown) =>
+    err instanceof Error ? err.message : String(err),
+}));
+
 import { LandingPage } from '../../src/components/LandingPage';
 import { PublicStoryView } from '../../src/components/PublicStoryView';
 import { StoryTagsModal } from '../../src/components/StoryTagsModal';
+import { TopNav } from '../../src/components/TopNav';
 import { UNIVERSE_TEMPLATES } from '../../src/data/presets';
-import { PublicStoryWork, StoryComment } from '../../src/types/story';
+import {
+  PublicStoryWork,
+  StoryComment,
+  StoryDisplayMode,
+  StorySubscription,
+  UserCollection,
+} from '../../src/types/story';
 import { normalizeStoryTags } from '../../src/utils/ao3Tags';
 import { storyProjectToPublicWork } from '../../src/utils/communityStore';
 
 function buildFixtureWorks(): PublicStoryWork[] {
-  const hp = storyProjectToPublicWork(UNIVERSE_TEMPLATES[0].starterProject, {
+  const hpBase = JSON.parse(JSON.stringify(UNIVERSE_TEMPLATES[0].starterProject));
+  hpBase.turns.push({
+    ...hpBase.turns[0],
+    id: 'turn-hp-2',
+    turnNumber: 2,
+    sceneTitle: 'The Midnight Detour',
+    prose: ['Second scene prose in the same chapter or next chapter.'],
+    timestamp: Date.now(),
+  });
+  hpBase.chapters = [
+    {
+      id: 'ch-hp-1',
+      chapterNumber: 1,
+      title: 'The Tapestry Inquiry',
+      summary: 'Opening investigations.',
+      turnIds: [hpBase.turns[0].id],
+      createdAt: 1000,
+    },
+    {
+      id: 'ch-hp-2',
+      chapterNumber: 2,
+      title: 'Midnight Detour',
+      summary: 'Second chapter.',
+      turnIds: ['turn-hp-2'],
+      createdAt: 2000,
+    },
+  ];
+  const hp = storyProjectToPublicWork(hpBase, {
     authorName: 'J. Archivist',
     kudosCount: 25,
     commentCount: 3,
@@ -32,16 +87,68 @@ function buildFixtureWorks(): PublicStoryWork[] {
   return [hp, dune, secretDraft];
 }
 
-describe('Landing Page Story Index, AO3 Tags, Comments & Kudos UI Integration', () => {
-  it('excludes stories marked isPrivate: true and filters Story Index when AO3 tags are clicked', () => {
+describe('Landing Page Story Index, Collections, Subscriptions, Anonymous Kudos & Hierarchical Comments', () => {
+  it('renders an icon-only Account button without a visible text label in TopNav', () => {
+    render(
+      <TopNav
+        activeTab="discover"
+        onSelectTab={() => {}}
+        onOpenNewStory={() => {}}
+        onOpenStudioSettings={() => {}}
+        onOpenAccountSettings={() => {}}
+        accountUsername="ArchivistPen"
+      />,
+    );
+
+    const accountBtn = screen.getByTestId('account-icon-btn');
+    expect(accountBtn).toBeInTheDocument();
+    expect(accountBtn.textContent?.trim()).toBe('');
+    expect(accountBtn).toHaveAttribute('aria-label', 'Account (ArchivistPen)');
+  });
+
+  it('excludes private stories, supports AO3 tag filtering, collections & subscriptions in LandingPage', () => {
     const works = buildFixtureWorks();
     const onOpenStory = vi.fn();
+    const onToggleSubscribe = vi.fn();
+    const onCreateCollection = vi.fn();
+    const onDeleteCollection = vi.fn();
+    const onToggleCollectionStory = vi.fn();
+
+    const collections: UserCollection[] = [
+      {
+        id: 'col-1',
+        ownerUid: 'u1',
+        name: 'Slow Burn Favorites',
+        description: 'Top picks',
+        isPrivate: true,
+        storyIds: [works[0].id],
+        createdAtMs: 1000,
+        updatedAtMs: 1000,
+      },
+    ];
+    const subscriptions: StorySubscription[] = [
+      {
+        storyId: works[0].id,
+        storyTitle: works[0].title,
+        authorName: works[0].authorName,
+        lastSeenTurnCount: 1,
+        lastSeenChapterCount: 1,
+        subscribedAtMs: 1000,
+        updatedAtMs: 1000,
+      },
+    ];
 
     render(
       <LandingPage
         stories={works}
         privateDraftCount={1}
         givenKudoStoryIds={new Set()}
+        collections={collections}
+        subscriptions={subscriptions}
+        onToggleSubscribe={onToggleSubscribe}
+        onCreateCollection={onCreateCollection}
+        onDeleteCollection={onDeleteCollection}
+        onToggleCollectionStory={onToggleCollectionStory}
         onOpenStory={onOpenStory}
         onEnterStudio={() => {}}
         onOpenNewStory={() => {}}
@@ -55,7 +162,7 @@ describe('Landing Page Story Index, AO3 Tags, Comments & Kudos UI Integration', 
     ).not.toBeInTheDocument();
     expect(screen.getByText(/1 private manuscript excluded/i)).toBeInTheDocument();
 
-    // Click an AO3 Relationship tag on the card to filter the index
+    // Filter by AO3 Relationship tag
     fireEvent.click(
       screen.getAllByRole('button', { name: /Paul Atreides & Lady Jessica/i })[0],
     );
@@ -64,22 +171,81 @@ describe('Landing Page Story Index, AO3 Tags, Comments & Kudos UI Integration', 
 
     fireEvent.click(screen.getByRole('button', { name: 'Shadows of the Salt Throne' }));
     expect(onOpenStory).toHaveBeenCalledWith(works[1].id);
+
+    // Switch to Subscriptions tab & verify new-scene indicator
+    fireEvent.click(screen.getByRole('tab', { name: /Subscriptions \(1\)/i }));
+    expect(screen.getByText(/\+1 new scene/i)).toBeInTheDocument();
+
+    // Switch to Collections tab & create a collection
+    fireEvent.click(screen.getByRole('tab', { name: /Collections \(1\)/i }));
+    expect(screen.getByText('Slow Burn Favorites')).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText(/Collection title/i), {
+      target: { value: 'Mystery Shelf' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Create Collection/i }));
+    expect(onCreateCollection).toHaveBeenCalledWith({
+      name: 'Mystery Shelf',
+      description: '',
+      isPrivate: true,
+    });
   });
 
-  it('supports one-click kudos deduplication and threaded reader comments in PublicStoryView', async () => {
+  it('supports anonymous kudos, hovering floating bar, 3-way display mode toggle, and hierarchical scene->chapter->story comments', async () => {
     const work = buildFixtureWorks()[0];
     let hasKudo = false;
     let kudosCount = work.kudosCount;
+    let displayMode: StoryDisplayMode = 'scene';
     const comments: StoryComment[] = [
       {
-        id: 'cmt-1',
+        id: 'cmt-scene-1',
         storyId: work.id,
         authorUid: 'reader-1',
         authorName: 'Reader One',
-        body: 'Fantastic opening intrigue.',
+        body: 'Scene 1 specific critique.',
+        targetType: 'scene',
+        targetId: work.turns[0].id,
+        targetLabel: 'Scene 01 — The Ledger Behind the Tapestry',
         storyIsPrivate: false,
         createdAtMs: 1763400000000,
         updatedAtMs: 1763400000000,
+      },
+      {
+        id: 'cmt-scene-1-sub',
+        storyId: work.id,
+        authorUid: 'reader-2',
+        authorName: 'Sub Commenter',
+        body: 'Nested reply on scene 1!',
+        targetType: 'scene',
+        targetId: work.turns[0].id,
+        parentCommentId: 'cmt-scene-1',
+        storyIsPrivate: false,
+        createdAtMs: 1763400001000,
+        updatedAtMs: 1763400001000,
+      },
+      {
+        id: 'cmt-ch-1',
+        storyId: work.id,
+        authorUid: 'reader-3',
+        authorName: 'Chapter Fan',
+        body: 'Chapter 1 overall note.',
+        targetType: 'chapter',
+        targetId: 'ch-hp-1',
+        targetLabel: 'Chapter 01 — The Tapestry Inquiry',
+        storyIsPrivate: false,
+        createdAtMs: 1763400002000,
+        updatedAtMs: 1763400002000,
+      },
+      {
+        id: 'cmt-story-top',
+        storyId: work.id,
+        authorUid: 'reader-4',
+        authorName: 'Full Book Fan',
+        body: 'Story-wide arc praise.',
+        targetType: 'story',
+        targetId: work.id,
+        storyIsPrivate: false,
+        createdAtMs: 1763400003000,
+        updatedAtMs: 1763400003000,
       },
     ];
 
@@ -91,9 +257,11 @@ describe('Landing Page Story Index, AO3 Tags, Comments & Kudos UI Integration', 
       comments.push({
         id: `cmt-${comments.length + 1}`,
         storyId: work.id,
-        authorUid: 'user-self',
+        authorUid: 'anon_abc12345',
         authorName: payload.authorName || 'Tester',
         body: payload.body,
+        targetType: payload.targetType,
+        targetId: payload.targetId,
         parentCommentId: payload.parentCommentId,
         chapterOrSceneLabel: payload.chapterOrSceneLabel,
         storyIsPrivate: false,
@@ -106,46 +274,71 @@ describe('Landing Page Story Index, AO3 Tags, Comments & Kudos UI Integration', 
       if (idx >= 0) comments.splice(idx, 1);
     });
 
-    const { rerender } = render(
+    const renderView = () => (
       <PublicStoryView
         story={{ ...work, kudosCount }}
         comments={[...comments]}
         hasGivenKudo={hasKudo}
-        currentReaderUid="user-self"
-        currentReaderName="Tester"
+        isSignedIn={false}
+        currentReaderUid="anon_abc12345"
+        currentReaderName="PenName"
         isOwner={false}
+        displayMode={displayMode}
+        onChangeDisplayMode={(m) => {
+          displayMode = m;
+        }}
+        collections={[]}
+        isSubscribed={false}
+        onToggleSubscribe={() => {}}
+        onToggleCollectionStory={() => {}}
+        onQuickCreateCollection={() => {}}
         onBackToIndex={() => {}}
         onGiveKudo={onGiveKudo}
         onAddComment={onAddComment}
         onDeleteComment={onDeleteComment}
         onOpenInStudio={() => {}}
-      />,
+      />
     );
 
+    const { rerender } = render(renderView());
+
+    // Hovering overlay bar is present
+    expect(screen.getByTestId('story-floating-bar')).toBeInTheDocument();
+
+    // In Scene 1 view: sees scene comment + sub-comment, NOT chapter/story comments
+    expect(screen.getByText('Scene 1 specific critique.')).toBeInTheDocument();
+    expect(screen.getByText('Nested reply on scene 1!')).toBeInTheDocument();
+    expect(screen.queryByText('Chapter 1 overall note.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Story-wide arc praise.')).not.toBeInTheDocument();
+
+    // Switch to Chapters view -> rolls Scene 1 comments & sub-comments into Chapter 1
+    displayMode = 'chapters';
+    rerender(renderView());
+    expect(screen.getByText('Scene 1 specific critique.')).toBeInTheDocument();
+    expect(screen.getByText('Nested reply on scene 1!')).toBeInTheDocument();
+    expect(screen.getByText('Chapter 1 overall note.')).toBeInTheDocument();
+    expect(screen.queryByText('Story-wide arc praise.')).not.toBeInTheDocument();
+
+    // Switch to Full Story view -> rolls story + chapter + scene comments & sub-comments together
+    displayMode = 'story';
+    rerender(renderView());
+    expect(screen.getByText('Scene 1 specific critique.')).toBeInTheDocument();
+    expect(screen.getByText('Nested reply on scene 1!')).toBeInTheDocument();
+    expect(screen.getByText('Chapter 1 overall note.')).toBeInTheDocument();
+    expect(screen.getByText('Story-wide arc praise.')).toBeInTheDocument();
+
+    // Anonymous kudos works while signed out
     const kudoBtn = screen.getByTestId('give-kudos-btn');
-    expect(kudoBtn).toHaveTextContent('Give Kudos');
     fireEvent.click(kudoBtn);
-    await waitFor(() => expect(onGiveKudo).toHaveBeenCalledWith(work.id));
-
-    rerender(
-      <PublicStoryView
-        story={{ ...work, kudosCount }}
-        comments={[...comments]}
-        hasGivenKudo={hasKudo}
-        currentReaderUid="user-self"
-        currentReaderName="Tester"
-        isOwner={false}
-        onBackToIndex={() => {}}
-        onGiveKudo={onGiveKudo}
-        onAddComment={onAddComment}
-        onDeleteComment={onDeleteComment}
-        onOpenInStudio={() => {}}
-      />,
+    await waitFor(() =>
+      expect(onGiveKudo).toHaveBeenCalledWith(work.id, { anonymous: true }),
     );
+
+    rerender(renderView());
     expect(screen.getByTestId('give-kudos-btn')).toBeDisabled();
     expect(screen.getByTestId('give-kudos-btn')).toHaveTextContent('Kudos Given');
 
-    // Submit a new comment
+    // Submit & delete own comment
     const commentBox = screen.getByLabelText(/Leave a Comment/i);
     fireEvent.change(commentBox, {
       target: { value: 'Loved the Marauder Map continuity detail!' },
@@ -156,42 +349,12 @@ describe('Landing Page Story Index, AO3 Tags, Comments & Kudos UI Integration', 
         work.id,
         expect.objectContaining({
           body: 'Loved the Marauder Map continuity detail!',
+          targetType: 'story',
         }),
       ),
     );
 
-    // Reply to parent comment
-    fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
-    const replyInput = screen.getByPlaceholderText(/Reply to Reader One/i);
-    fireEvent.change(replyInput, { target: { value: 'Agreed completely!' } });
-    fireEvent.click(screen.getByRole('button', { name: /Post Reply/i }));
-    await waitFor(() =>
-      expect(onAddComment).toHaveBeenCalledWith(
-        work.id,
-        expect.objectContaining({
-          parentCommentId: 'cmt-1',
-          body: 'Agreed completely!',
-        }),
-      ),
-    );
-
-    // Rerender with comments and delete own comment
-    rerender(
-      <PublicStoryView
-        story={{ ...work, kudosCount }}
-        comments={[...comments]}
-        hasGivenKudo={hasKudo}
-        currentReaderUid="user-self"
-        currentReaderName="Tester"
-        isOwner={false}
-        onBackToIndex={() => {}}
-        onGiveKudo={onGiveKudo}
-        onAddComment={onAddComment}
-        onDeleteComment={onDeleteComment}
-        onOpenInStudio={() => {}}
-      />,
-    );
-
+    rerender(renderView());
     const deleteBtns = screen.getAllByRole('button', { name: /Delete/i });
     expect(deleteBtns.length).toBeGreaterThanOrEqual(1);
     fireEvent.click(deleteBtns[0]);
@@ -216,13 +379,10 @@ describe('Landing Page Story Index, AO3 Tags, Comments & Kudos UI Integration', 
       />,
     );
 
-    // Toggle to Private
     fireEvent.click(screen.getByText(/Private · Hidden from Index/i));
-    // Change rating
     fireEvent.change(screen.getByLabelText('Rating'), {
       target: { value: 'Mature' },
     });
-    // Add an additional freeform tag
     const freeformInput = screen.getByLabelText('Additional Tags');
     fireEvent.change(freeformInput, { target: { value: 'Hurt/Comfort' } });
     fireEvent.keyDown(freeformInput, { key: 'Enter', code: 'Enter' });
@@ -240,5 +400,92 @@ describe('Landing Page Story Index, AO3 Tags, Comments & Kudos UI Integration', 
       }),
     );
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('renders story, chapter, and scene prefix/suffix author notes across display modes and preserves them on Branch in Studio', () => {
+    const baseWork = buildFixtureWorks()[0];
+    baseWork.prefixNote = 'Public story beginning note.';
+    baseWork.suffixNote = 'Public story ending note.';
+    baseWork.chapters[0].prefixNote = 'Public chapter 1 prefix note.';
+    baseWork.chapters[0].suffixNote = 'Public chapter 1 suffix note.';
+    baseWork.chapters[1].prefixNote = 'Public chapter 2 prefix note.';
+    baseWork.turns[0].prefixNote = 'Public scene 1 prefix note.';
+    baseWork.turns[0].suffixNote = 'Public scene 1 suffix note.';
+
+    let displayMode: StoryDisplayMode = 'scene';
+    const onOpenInStudio = vi.fn();
+
+    const makeProps = () => ({
+      story: baseWork,
+      comments: [],
+      hasGivenKudo: false,
+      isSignedIn: false,
+      currentReaderUid: 'anon_abc12345',
+      currentReaderName: 'Reader',
+      isOwner: false,
+      displayMode,
+      onChangeDisplayMode: (m: StoryDisplayMode) => {
+        displayMode = m;
+      },
+      collections: [],
+      isSubscribed: false,
+      onToggleSubscribe: () => {},
+      onToggleCollectionStory: () => {},
+      onQuickCreateCollection: () => {},
+      onBackToIndex: () => {},
+      onGiveKudo: async () => {},
+      onAddComment: async () => {},
+      onDeleteComment: async () => {},
+      onOpenInStudio,
+    });
+
+    const { rerender } = render(<PublicStoryView {...makeProps()} />);
+
+    // Scene 1: sees story opener + scene 1 prefix/suffix, but NOT story ending yet (since scene 2 is last)
+    expect(screen.getByText('Public story beginning note.')).toBeInTheDocument();
+    expect(screen.getByText('Public scene 1 prefix note.')).toBeInTheDocument();
+    expect(screen.getByText('Public scene 1 suffix note.')).toBeInTheDocument();
+    expect(screen.queryByText('Public story ending note.')).not.toBeInTheDocument();
+
+    // Chapters mode (Chapter 1): sees story opener, chapter 1 prefix/suffix, scene 1 notes
+    displayMode = 'chapters';
+    rerender(<PublicStoryView {...makeProps()} />);
+    expect(screen.getByText('Public story beginning note.')).toBeInTheDocument();
+    expect(screen.getByText('Public chapter 1 prefix note.')).toBeInTheDocument();
+    expect(screen.getByText('Public chapter 1 suffix note.')).toBeInTheDocument();
+    expect(screen.getByText('Public scene 1 prefix note.')).toBeInTheDocument();
+    expect(screen.queryByText('Public story ending note.')).not.toBeInTheDocument();
+
+    // Full story mode: sees all story, chapter, and scene prefix/suffix notes
+    displayMode = 'story';
+    rerender(<PublicStoryView {...makeProps()} />);
+    expect(screen.getByText('Public story beginning note.')).toBeInTheDocument();
+    expect(screen.getByText('Public story ending note.')).toBeInTheDocument();
+    expect(screen.getByText('Public chapter 1 prefix note.')).toBeInTheDocument();
+    expect(screen.getByText('Public chapter 1 suffix note.')).toBeInTheDocument();
+    expect(screen.getByText('Public chapter 2 prefix note.')).toBeInTheDocument();
+    expect(screen.getByText('Public scene 1 prefix note.')).toBeInTheDocument();
+    expect(screen.getByText('Public scene 1 suffix note.')).toBeInTheDocument();
+
+    // Branch in Studio preserves story/chapter/scene notes
+    fireEvent.click(screen.getByRole('button', { name: /Branch in Studio/i }));
+    expect(onOpenInStudio).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prefixNote: 'Public story beginning note.',
+        suffixNote: 'Public story ending note.',
+        chapters: expect.arrayContaining([
+          expect.objectContaining({
+            prefixNote: 'Public chapter 1 prefix note.',
+            suffixNote: 'Public chapter 1 suffix note.',
+          }),
+        ]),
+        turns: expect.arrayContaining([
+          expect.objectContaining({
+            prefixNote: 'Public scene 1 prefix note.',
+            suffixNote: 'Public scene 1 suffix note.',
+          }),
+        ]),
+      }),
+    );
   });
 });

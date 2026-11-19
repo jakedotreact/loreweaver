@@ -7,7 +7,8 @@ import {
   Loader2,
 } from 'lucide-react';
 import { formatReadableFirestoreError, useAuth } from '../contexts/AuthContext';
-import { SharedWork, StoryProject } from '../types/story';
+import { SharedWork, StoryProject, StoryTurn } from '../types/story';
+import { AuthorNoteBlock } from './AuthorNoteBlock';
 
 interface SharedWorkViewProps {
   shareId: string;
@@ -68,6 +69,8 @@ export const SharedWorkView: React.FC<SharedWorkViewProps> = ({
       setting: work.setting,
       tone: work.tone,
       premise: work.premise,
+      prefixNote: work.scope === 'story' ? work.prefixNote : undefined,
+      suffixNote: work.scope === 'story' ? work.suffixNote : undefined,
       protagonistId: protagonist?.id ?? '',
       turns: clonedTurns,
       characters: work.characters,
@@ -178,44 +181,145 @@ export const SharedWorkView: React.FC<SharedWorkViewProps> = ({
               )}
             </header>
 
-            <div className="space-y-8">
-              {work.turns.map((turn) => (
-                <section
-                  key={turn.id}
-                  className="bg-white border border-neutral-200 rounded-xl p-6 sm:p-8 space-y-4"
-                >
-                  <div className="pb-3 border-b border-neutral-100">
-                    <p className="text-xs font-mono tabular-nums text-[#6B7280]">
-                      Scene {String(turn.turnNumber).padStart(2, '0')}{' '}
-                      <span aria-hidden="true">·</span> {turn.location}{' '}
-                      <span aria-hidden="true">·</span> {turn.inStoryTime}
-                    </p>
-                    <h2 className="font-editorial text-2xl font-semibold text-[#111827] mt-1">
-                      {turn.sceneTitle}
-                    </h2>
-                  </div>
+            {work.scope !== 'scene' && work.prefixNote && (
+              <AuthorNoteBlock
+                variant="prefix"
+                scope={work.scope === 'chapter' ? 'chapter' : 'story'}
+                note={work.prefixNote}
+              />
+            )}
 
-                  {turn.userAction && (
-                    <div className="px-4 py-2.5 bg-neutral-50 border border-neutral-200 rounded-lg text-sm text-[#374151] whitespace-pre-wrap">
-                      <span className="font-semibold text-[#111827]">Prompt: </span>
-                      {turn.userAction}
+            {(() => {
+              const renderTurnCard = (turn: StoryTurn) => {
+                const scenePrefix =
+                  work.scope === 'scene'
+                    ? work.prefixNote ?? turn.prefixNote
+                    : turn.prefixNote;
+                const sceneSuffix =
+                  work.scope === 'scene'
+                    ? work.suffixNote ?? turn.suffixNote
+                    : turn.suffixNote;
+                return (
+                  <section
+                    key={turn.id}
+                    className="bg-white border border-neutral-200 rounded-xl p-6 sm:p-8 space-y-4"
+                  >
+                    <div className="pb-3 border-b border-neutral-100">
+                      <p className="text-xs font-mono tabular-nums text-[#6B7280]">
+                        Scene {String(turn.turnNumber).padStart(2, '0')}{' '}
+                        <span aria-hidden="true">·</span> {turn.location}{' '}
+                        <span aria-hidden="true">·</span> {turn.inStoryTime}
+                      </p>
+                      <h2 className="font-editorial text-2xl font-semibold text-[#111827] mt-1">
+                        {turn.sceneTitle}
+                      </h2>
                     </div>
-                  )}
 
-                  <div className="space-y-4 max-w-[68ch] text-[15.5px] leading-[1.75] text-[#111827]">
-                    {turn.prose.map((p, pIdx) => (
-                      <p key={pIdx}>{p}</p>
+                    {turn.userAction && (
+                      <div className="px-4 py-2.5 bg-neutral-50 border border-neutral-200 rounded-lg text-sm text-[#374151] whitespace-pre-wrap">
+                        <span className="font-semibold text-[#111827]">Prompt: </span>
+                        {turn.userAction}
+                      </div>
+                    )}
+
+                    {scenePrefix && (
+                      <AuthorNoteBlock
+                        variant="prefix"
+                        scope="scene"
+                        note={scenePrefix}
+                        compact
+                      />
+                    )}
+
+                    <div className="space-y-4 max-w-[68ch] text-[15.5px] leading-[1.75] text-[#111827]">
+                      {turn.prose.map((p, pIdx) => (
+                        <p key={pIdx}>{p}</p>
+                      ))}
+                    </div>
+
+                    {sceneSuffix && (
+                      <AuthorNoteBlock
+                        variant="suffix"
+                        scope="scene"
+                        note={sceneSuffix}
+                        compact
+                      />
+                    )}
+
+                    {turn.activeCharacters.length > 0 && (
+                      <p className="pt-3 border-t border-neutral-100 text-xs text-[#6B7280]">
+                        Present: {turn.activeCharacters.join(' · ')}
+                      </p>
+                    )}
+                  </section>
+                );
+              };
+
+              if (work.scope === 'story' && work.chapters.length > 0) {
+                const turnMap = new Map(work.turns.map((t) => [t.id, t]));
+                const assignedIds = new Set<string>();
+                const chapterSections = work.chapters
+                  .map((ch) => {
+                    const chTurns = ch.turnIds
+                      .map((id) => turnMap.get(id))
+                      .filter((t): t is StoryTurn => Boolean(t));
+                    chTurns.forEach((t) => assignedIds.add(t.id));
+                    return { chapter: ch, turns: chTurns };
+                  })
+                  .filter((entry) => entry.turns.length > 0);
+                const unassigned = work.turns.filter((t) => !assignedIds.has(t.id));
+
+                return (
+                  <div className="space-y-10">
+                    {chapterSections.map(({ chapter, turns }) => (
+                      <div key={chapter.id} className="space-y-5">
+                        <div className="border-b border-neutral-200 pb-2">
+                          <h2 className="font-editorial text-2xl font-semibold text-[#111827]">
+                            Chapter {String(chapter.chapterNumber).padStart(2, '0')} —{' '}
+                            {chapter.title}
+                          </h2>
+                          {chapter.summary && (
+                            <p className="text-sm text-[#4B5563] mt-1">
+                              {chapter.summary}
+                            </p>
+                          )}
+                        </div>
+                        {chapter.prefixNote && (
+                          <AuthorNoteBlock
+                            variant="prefix"
+                            scope="chapter"
+                            note={chapter.prefixNote}
+                            compact
+                          />
+                        )}
+                        <div className="space-y-6">{turns.map(renderTurnCard)}</div>
+                        {chapter.suffixNote && (
+                          <AuthorNoteBlock
+                            variant="suffix"
+                            scope="chapter"
+                            note={chapter.suffixNote}
+                            compact
+                          />
+                        )}
+                      </div>
                     ))}
+                    {unassigned.length > 0 && (
+                      <div className="space-y-6">{unassigned.map(renderTurnCard)}</div>
+                    )}
                   </div>
+                );
+              }
 
-                  {turn.activeCharacters.length > 0 && (
-                    <p className="pt-3 border-t border-neutral-100 text-xs text-[#6B7280]">
-                      Present: {turn.activeCharacters.join(' · ')}
-                    </p>
-                  )}
-                </section>
-              ))}
-            </div>
+              return <div className="space-y-8">{work.turns.map(renderTurnCard)}</div>;
+            })()}
+
+            {work.scope !== 'scene' && work.suffixNote && (
+              <AuthorNoteBlock
+                variant="suffix"
+                scope={work.scope === 'chapter' ? 'chapter' : 'story'}
+                note={work.suffixNote}
+              />
+            )}
           </article>
         )}
       </main>

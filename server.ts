@@ -2,7 +2,6 @@ import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import path from 'path';
-import { createServer as createViteServer } from 'vite';
 import { createApiApp } from './server/apiApp.ts';
 import { attachCollabWebSocket } from './server/collabHub.ts';
 
@@ -14,10 +13,13 @@ async function startServer() {
   attachCollabWebSocket(httpServer);
 
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
+        allowedHosts: true,
+        hmr: process.env.DISABLE_HMR !== 'true',
+        ws: { server: httpServer },
       },
       appType: 'spa',
     });

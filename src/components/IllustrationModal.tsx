@@ -10,6 +10,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
+import { useModalScrollLock } from '../hooks/useModalScrollLock';
 import {
   ModelConfig,
   StoryChapter,
@@ -124,6 +125,8 @@ export const IllustrationModal: React.FC<IllustrationModalProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [target, existingIllustration, defaultCaption, onClose]);
+
+  useModalScrollLock(Boolean(target));
 
   if (!target) return null;
 
@@ -269,7 +272,7 @@ export const IllustrationModal: React.FC<IllustrationModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-hidden overscroll-contain"
       role="dialog"
       aria-modal="true"
       aria-labelledby="illustration-modal-heading"
@@ -277,7 +280,7 @@ export const IllustrationModal: React.FC<IllustrationModalProps> = ({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-3xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
+      <div className="w-full max-w-3xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden max-h-[92vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-neutral-200 flex items-start justify-between gap-4 shrink-0">
           <div className="flex items-start gap-3 min-w-0">
@@ -305,7 +308,7 @@ export const IllustrationModal: React.FC<IllustrationModalProps> = ({
         </div>
 
         {/* Scrollable Body */}
-        <div className="p-6 space-y-7 overflow-y-auto flex-1">
+        <div className="p-6 space-y-7 overflow-y-auto overscroll-contain flex-1 min-h-0">
           <p className="text-xs text-[#4B5563] bg-neutral-50 border border-neutral-200 rounded-lg px-4 py-2.5 leading-relaxed">
             In-app AI image rendering requires a paid API key, so this studio combines{' '}
             <span className="font-semibold text-[#111827]">

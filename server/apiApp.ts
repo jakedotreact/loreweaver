@@ -4,6 +4,7 @@ import {
   auditContinuity,
   deduceSingleCharacter,
   deduceUniverseAndCast,
+  enrichImportedStory,
   formatGeminiError,
   generateIllustrationPrompt,
   listAvailableModels,
@@ -11,6 +12,10 @@ import {
   synthesizeNarrativeSpeech,
   transcribeDictation,
 } from './storyAgent.ts';
+import {
+  importStoryFromFileBuffer,
+  importStoryFromUrl,
+} from './storyImporter.ts';
 
 export function createApiApp(): express.Express {
   const app = express();
@@ -246,6 +251,104 @@ export function createApiApp(): express.Express {
       return res.status(500).json({
         error: formatGeminiError(err, 'Failed to generate illustration prompt.'),
       });
+    }
+  });
+
+  app.post('/api/story/import-file', async (req, res) => {
+    try {
+      const {
+        filename,
+        mimeType,
+        contentBase64,
+        title,
+        universe,
+        setting,
+        tone,
+        isPrivate,
+        enrichWithAi,
+        modelConfig,
+      } = req.body ?? {};
+
+      if (!filename || typeof filename !== 'string' || !filename.trim()) {
+        return res.status(400).json({ error: 'Filename is required for story import.' });
+      }
+      if (!contentBase64 || typeof contentBase64 !== 'string') {
+        return res.status(400).json({ error: 'File content is required for story import.' });
+      }
+
+      const cleanBase64 = contentBase64.includes(',')
+        ? contentBase64.split(',').pop() || ''
+        : contentBase64;
+      const buffer = Buffer.from(cleanBase64, 'base64');
+
+      const shouldEnrich = enrichWithAi !== false && Boolean(process.env.GEMINI_API_KEY);
+      const result = await importStoryFromFileBuffer({
+        filename: filename.trim(),
+        mimeType: typeof mimeType === 'string' ? mimeType : undefined,
+        buffer,
+        options: {
+          title: typeof title === 'string' ? title : undefined,
+          universe: typeof universe === 'string' ? universe : undefined,
+          setting: typeof setting === 'string' ? setting : undefined,
+          tone: typeof tone === 'string' ? tone : undefined,
+          isPrivate: typeof isPrivate === 'boolean' ? isPrivate : true,
+          enrichWithAi: shouldEnrich,
+          modelConfig,
+          enricher: shouldEnrich ? enrichImportedStory : undefined,
+        },
+      });
+      return res.json(result);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to import story document.';
+      const isClientErr =
+        /required|unsupported|empty|corrupted|invalid|size limit|no readable/i.test(
+          message,
+        );
+      return res.status(isClientErr ? 400 : 500).json({ error: message });
+    }
+  });
+
+  app.post('/api/story/import-url', async (req, res) => {
+    try {
+      const {
+        url,
+        title,
+        universe,
+        setting,
+        tone,
+        isPrivate,
+        enrichWithAi,
+        modelConfig,
+      } = req.body ?? {};
+
+      if (!url || typeof url !== 'string' || !url.trim()) {
+        return res.status(400).json({ error: 'A valid http:// or https:// URL is required.' });
+      }
+
+      const shouldEnrich = enrichWithAi !== false && Boolean(process.env.GEMINI_API_KEY);
+      const result = await importStoryFromUrl({
+        url: url.trim(),
+        options: {
+          title: typeof title === 'string' ? title : undefined,
+          universe: typeof universe === 'string' ? universe : undefined,
+          setting: typeof setting === 'string' ? setting : undefined,
+          tone: typeof tone === 'string' ? tone : undefined,
+          isPrivate: typeof isPrivate === 'boolean' ? isPrivate : true,
+          enrichWithAi: shouldEnrich,
+          modelConfig,
+          enricher: shouldEnrich ? enrichImportedStory : undefined,
+        },
+      });
+      return res.json(result);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to import story from URL.';
+      const isClientErr =
+        /valid http|not allowed|restricted internal|resolve hostname|returned http|empty response|no readable|timed out|exceeds/i.test(
+          message,
+        );
+      return res.status(isClientErr ? 400 : 500).json({ error: message });
     }
   });
 

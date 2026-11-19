@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  sanitizeAuthorNote,
   stripChaptersForCloud,
   stripIllustrationDataUrl,
   stripSavePointsForCloud,
@@ -71,6 +72,8 @@ describe('cloudSanitize utilities', () => {
         selectedChoiceId: null,
         timestamp: 1700000,
         choices: [],
+        prefixNote: '  Before scene one.  ',
+        suffixNote: '   ',
         illustration: {
           id: 'ill-t1',
           promptUsed: 'Prompt',
@@ -85,6 +88,8 @@ describe('cloudSanitize utilities', () => {
 
     expect(turns[0].illustration?.dataUrl).toBe('');
     expect('artStyle' in turns[0]).toBe(false);
+    expect(turns[0].prefixNote).toBe('Before scene one.');
+    expect('suffixNote' in turns[0]).toBe(false);
 
     const chapters = stripChaptersForCloud([
       {
@@ -92,6 +97,8 @@ describe('cloudSanitize utilities', () => {
         chapterNumber: 1,
         title: 'Part I',
         summary: 'Start',
+        prefixNote: '  Chapter intro note  ',
+        suffixNote: '',
         turnIds: ['t1'],
         mergedAt: 100,
         illustration: {
@@ -105,6 +112,8 @@ describe('cloudSanitize utilities', () => {
       },
     ]);
     expect(chapters[0].illustration?.dataUrl).toBe('');
+    expect(chapters[0].prefixNote).toBe('Chapter intro note');
+    expect('suffixNote' in chapters[0]).toBe(false);
 
     const savePoints = stripSavePointsForCloud([
       {
@@ -119,6 +128,8 @@ describe('cloudSanitize utilities', () => {
           setting: 'City',
           tone: 'Warm',
           premise: 'A tale',
+          prefixNote: '  Story beginning note  ',
+          suffixNote: '  ',
           protagonistId: 'char1',
           turns,
           characters: [],
@@ -129,5 +140,19 @@ describe('cloudSanitize utilities', () => {
     ]);
     expect(savePoints).toHaveLength(1);
     expect(savePoints[0].snapshot.turns[0].illustration?.dataUrl).toBe('');
+    expect(savePoints[0].snapshot.prefixNote).toBe('Story beginning note');
+    expect('suffixNote' in savePoints[0].snapshot).toBe(false);
+  });
+
+  it('trims, drops empty, and truncates author notes over 4000 chars', () => {
+    expect(sanitizeAuthorNote(undefined)).toBeUndefined();
+    expect(sanitizeAuthorNote(null)).toBeUndefined();
+    expect(sanitizeAuthorNote('   \n\t  ')).toBeUndefined();
+    expect(sanitizeAuthorNote('  Hello\nWorld  ')).toBe('Hello\nWorld');
+
+    const oversized = 'A'.repeat(4500);
+    const bounded = sanitizeAuthorNote(oversized);
+    expect(bounded).toHaveLength(4000);
   });
 });
+

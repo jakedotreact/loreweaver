@@ -1,11 +1,11 @@
-import {
+import type {
   Ao3Category,
   Ao3Rating,
   Ao3Warning,
   PublicStoryWork,
   StoryProject,
   StoryTags,
-} from '../types/story';
+} from '../types/story.ts';
 
 export const AO3_RATINGS: readonly Ao3Rating[] = [
   'General Audiences',

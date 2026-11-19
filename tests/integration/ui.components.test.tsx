@@ -25,8 +25,11 @@ vi.mock('../../src/contexts/AuthContext', () => ({
 }));
 
 import { NewStoryModal } from '../../src/components/NewStoryModal';
+import { StoryTagsModal } from '../../src/components/StoryTagsModal';
 import { StoryWorkspace } from '../../src/components/StoryWorkspace';
+import { StudioSettingsModal } from '../../src/components/StudioSettingsModal';
 import { UNIVERSE_TEMPLATES } from '../../src/data/presets';
+import { resetModalScrollLockForTests } from '../../src/hooks/useModalScrollLock';
 import { NarrativeSpeechControls } from '../../src/hooks/useNarrativeSpeech';
 import { ModelConfig, StoryProject } from '../../src/types/story';
 
@@ -127,8 +130,24 @@ describe('StoryWorkspace and NewStoryModal dual-link UI integration', () => {
         onShareStory={onShareStory}
         onCollaborateStory={onCollaborateStory}
         onShareScene={vi.fn()}
+        displayMode="story"
+        onChangeDisplayMode={vi.fn()}
+        publicStoryId="pub-alpha"
+        storyComments={[]}
+        currentReaderUid="anon_testreader1"
+        currentReaderName="Tester"
+        onAddComment={vi.fn()}
+        onDeleteComment={vi.fn()}
+        collections={[]}
+        isSubscribed={false}
+        onToggleSubscribe={vi.fn()}
+        onToggleCollectionStory={vi.fn()}
+        onQuickCreateCollection={vi.fn()}
       />,
     );
+
+    // Hovering storywide menu overlay is present
+    expect(screen.getByTestId('story-floating-bar')).toBeInTheDocument();
 
     // Masthead exposes both links explicitly
     const shareButtons = screen.getAllByRole('button', {
@@ -196,4 +215,283 @@ describe('StoryWorkspace and NewStoryModal dual-link UI integration', () => {
     fireEvent.click(collabBtns[0]);
     expect(onCollaborateStory).toHaveBeenCalledWith(story1);
   });
+
+  it('imports a story from URL via NewStoryModal Import tab and opens preview in Studio', async () => {
+    const importedStub = makeTwoSceneStory();
+    importedStub.id = 'proj-imported-1';
+    importedStub.title = 'Harbor of Glass';
+    importedStub.isPrivate = true;
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          project: importedStub,
+          stats: {
+            format: 'html',
+            sourceName: 'harbor',
+            wordCount: 420,
+            chapterCount: 1,
+            sceneCount: 2,
+            characterCount: 3,
+            crossIndexCount: 2,
+            aiEnriched: false,
+          },
+          warnings: [],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const onLoadProject = vi.fn();
+    const onClose = vi.fn();
+
+    render(
+      <NewStoryModal
+        isOpen={true}
+        initialMode="import"
+        onClose={onClose}
+        onLoadProject={onLoadProject}
+        stories={[makeTwoSceneStory()]}
+        activeStoryId="story-alpha"
+        onSelectStory={vi.fn()}
+        onDeleteStory={vi.fn()}
+        modelConfig={baseModelConfig}
+        onChangeModelConfig={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: /Import from URL/i }));
+    const urlInput = screen.getByLabelText(/Story Web Page or Document URL/i);
+    fireEvent.change(urlInput, {
+      target: { value: 'https://example.org/stories/harbor-of-glass' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Parse & Preview Story/i }));
+
+    expect(
+      await screen.findByText(/Review Imported Manuscript/i),
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Harbor of Glass')).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Open Imported Story in Studio/i }),
+    );
+    expect(onLoadProject).toHaveBeenCalledTimes(1);
+    expect(onLoadProject.mock.calls[0][0].title).toBe('Harbor of Glass');
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('renders and edits story, chapter, and scene prefix and suffix author notes in StoryWorkspace', () => {
+    const story = makeTwoSceneStory();
+    story.prefixNote = 'Story opening author note.';
+    story.suffixNote = 'Story closing author note.';
+    story.turns[0].prefixNote = 'Scene 1 prefix note.';
+    story.turns[0].suffixNote = 'Scene 1 suffix note.';
+    story.chapters = [
+      {
+        id: 'chap-1',
+        chapterNumber: 1,
+        title: 'Part One',
+        summary: 'Opening chapter',
+        prefixNote: 'Chapter 1 prefix note.',
+        suffixNote: 'Chapter 1 suffix note.',
+        turnIds: [story.turns[0].id, story.turns[1].id],
+        mergedAt: 1000,
+      },
+    ];
+
+    const onUpdateStoryNotes = vi.fn();
+    const onUpdateChapters = vi.fn();
+    const onCorrectTurn = vi.fn();
+
+    const commonProps = {
+      project: story,
+      storyCount: 1,
+      onOpenStoriesLibrary: vi.fn(),
+      isAdvancing: false,
+      pendingPrompt: null,
+      advanceError: null,
+      lastFailedAction: null,
+      onAdvanceStory: vi.fn(),
+      onRetryAdvance: vi.fn(),
+      onDismissAdvanceError: vi.fn(),
+      onBranchFromTurn: vi.fn(),
+      onCreateSavePoint: vi.fn(),
+      onRestoreSavePoint: vi.fn(),
+      onNavigateTab: vi.fn(),
+      onRunAuditAndOpen: vi.fn(),
+      onOpenHtmlExport: vi.fn(),
+      onCorrectTurn,
+      onUpdateTurnIllustration: vi.fn(),
+      isRewritingScene: false,
+      rewriteError: null,
+      onRewriteTurn: vi.fn(async () => true),
+      modelConfig: baseModelConfig,
+      onChangeModelConfig: vi.fn(),
+      speech: mockSpeech,
+      onPersistNow: vi.fn(async () => ({
+        ok: true,
+        location: 'local' as const,
+        message: 'Saved locally',
+      })),
+      onShareStory: vi.fn(),
+      onCollaborateStory: vi.fn(),
+      onShareScene: vi.fn(),
+      onUpdateStoryNotes,
+      onUpdateChapters,
+      onChangeDisplayMode: vi.fn(),
+      publicStoryId: 'pub-alpha',
+      storyComments: [],
+      currentReaderUid: 'anon_testreader1',
+      currentReaderName: 'Tester',
+      onAddComment: vi.fn(),
+      onDeleteComment: vi.fn(),
+      collections: [],
+      isSubscribed: false,
+      onToggleSubscribe: vi.fn(),
+      onToggleCollectionStory: vi.fn(),
+      onQuickCreateCollection: vi.fn(),
+    };
+
+    const { rerender } = render(
+      <StoryWorkspace {...commonProps} displayMode="story" />,
+    );
+
+    // Renders story, chapter, and scene prefix/suffix notes
+    expect(screen.getByText('Story opening author note.')).toBeInTheDocument();
+    expect(screen.getByText('Story closing author note.')).toBeInTheDocument();
+    expect(screen.getByText('Chapter 1 prefix note.')).toBeInTheDocument();
+    expect(screen.getByText('Chapter 1 suffix note.')).toBeInTheDocument();
+    expect(screen.getByText('Scene 1 prefix note.')).toBeInTheDocument();
+    expect(screen.getByText('Scene 1 suffix note.')).toBeInTheDocument();
+
+    // Scene 1 prefix appears before prose, and suffix appears after prose
+    const scenePrefixEl = screen.getByText('Scene 1 prefix note.');
+    const sceneProseEl = screen.getByText(story.turns[0].prose[0]);
+    const sceneSuffixEl = screen.getByText('Scene 1 suffix note.');
+    expect(
+      scenePrefixEl.compareDocumentPosition(sceneProseEl) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      sceneProseEl.compareDocumentPosition(sceneSuffixEl) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    // Edit Story Author Notes
+    fireEvent.click(screen.getByTestId('story-author-notes-btn'));
+    fireEvent.change(screen.getByLabelText(/Beginning Author's Note \(Prefix\)/i), {
+      target: { value: 'Updated story opener.' },
+    });
+    fireEvent.change(screen.getByLabelText(/Ending Author's Note \(Suffix\)/i), {
+      target: { value: 'Updated story ending.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save Story Notes/i }));
+    expect(onUpdateStoryNotes).toHaveBeenCalledWith({
+      prefixNote: 'Updated story opener.',
+      suffixNote: 'Updated story ending.',
+    });
+
+    // Edit Scene 1 prefix & suffix notes via SceneInlineEditor
+    fireEvent.click(
+      screen.getByRole('button', { name: /Edit scene 1 prompt or output/i }),
+    );
+    fireEvent.change(
+      screen.getByLabelText(/Beginning Author's Note \(Prefix, optional\)/i),
+      { target: { value: 'Revised scene 1 prefix.' } },
+    );
+    fireEvent.change(
+      screen.getByLabelText(/Ending Author's Note \(Suffix, optional\)/i),
+      { target: { value: 'Revised scene 1 suffix.' } },
+    );
+    fireEvent.click(screen.getAllByRole('button', { name: /Save Changes/i })[0]);
+    expect(onCorrectTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: story.turns[0].id,
+        prefixNote: 'Revised scene 1 prefix.',
+        suffixNote: 'Revised scene 1 suffix.',
+      }),
+    );
+
+    // Switch to Chapters mode and edit Chapter Author Notes
+    rerender(<StoryWorkspace {...commonProps} displayMode="chapters" />);
+    fireEvent.click(screen.getByRole('button', { name: /Chapter Notes/i }));
+    fireEvent.change(screen.getByLabelText(/Chapter Beginning Note \(Prefix\)/i), {
+      target: { value: 'Revised chapter 1 prefix.' },
+    });
+    fireEvent.change(screen.getByLabelText(/Chapter Ending Note \(Suffix\)/i), {
+      target: { value: 'Revised chapter 1 suffix.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save Chapter Notes/i }));
+    expect(onUpdateChapters).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 'chap-1',
+        prefixNote: 'Revised chapter 1 prefix.',
+        suffixNote: 'Revised chapter 1 suffix.',
+      }),
+    ]);
+  });
+
+  it('locks background window scrolling and isolates scroll inside open modal dialogs', () => {
+    resetModalScrollLockForTests();
+    document.documentElement.style.overflow = '';
+    document.body.style.overflow = '';
+    const story = makeTwoSceneStory();
+
+    const { rerender, unmount } = render(
+      <StoryTagsModal
+        isOpen={true}
+        story={story}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    const tagsDialog = screen.getByRole('dialog');
+    expect(tagsDialog).toHaveClass('overflow-hidden', 'overscroll-contain');
+    expect(document.documentElement.style.overflow).toBe('hidden');
+    expect(document.body.style.overflow).toBe('hidden');
+    expect(document.body.style.overscrollBehavior).toBe('none');
+
+    const scrollableForm = tagsDialog.querySelector('form');
+    expect(scrollableForm).toHaveClass(
+      'overflow-y-auto',
+      'overscroll-contain',
+      'flex-1',
+      'min-h-0',
+    );
+
+    // Stacked modal keeps background locked until both close
+    const settingsRender = render(
+      <StudioSettingsModal
+        isOpen={true}
+        onClose={vi.fn()}
+        modelConfig={baseModelConfig}
+        onChangeModelConfig={vi.fn()}
+        preferredVoice="Charon"
+        onChangeVoice={vi.fn()}
+        autoPlayNarration={false}
+        onChangeAutoPlayNarration={vi.fn()}
+        onOpenAccountSettings={vi.fn()}
+      />,
+    );
+
+    rerender(
+      <StoryTagsModal
+        isOpen={false}
+        story={story}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(document.body.style.overflow).toBe('hidden');
+
+    settingsRender.unmount();
+    expect(document.body.style.overflow).toBe('');
+    expect(document.documentElement.style.overflow).toBe('');
+    unmount();
+  });
 });
+

@@ -29,6 +29,8 @@ export const SceneInlineEditor: React.FC<SceneInlineEditorProps> = ({
   const [continuityWarning, setContinuityWarning] = useState(
     turn.continuityWarning ?? '',
   );
+  const [prefixNote, setPrefixNote] = useState(turn.prefixNote ?? '');
+  const [suffixNote, setSuffixNote] = useState(turn.suffixNote ?? '');
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -61,6 +63,8 @@ export const SceneInlineEditor: React.FC<SceneInlineEditorProps> = ({
       continuityWarning: continuityWarning.trim()
         ? continuityWarning.trim()
         : null,
+      prefixNote: prefixNote.trim() ? prefixNote.trim().slice(0, 4000) : undefined,
+      suffixNote: suffixNote.trim() ? suffixNote.trim().slice(0, 4000) : undefined,
     };
 
     onSave(updatedTurn);
@@ -174,6 +178,24 @@ export const SceneInlineEditor: React.FC<SceneInlineEditorProps> = ({
       </div>
 
       <div>
+        <label
+          htmlFor={`scene-prefix-note-${turn.id}`}
+          className="block text-xs font-medium text-[#111827] mb-1"
+        >
+          Beginning Author&apos;s Note (Prefix, optional)
+        </label>
+        <textarea
+          id={`scene-prefix-note-${turn.id}`}
+          rows={2}
+          maxLength={4000}
+          value={prefixNote}
+          onChange={(e) => setPrefixNote(e.target.value)}
+          placeholder="Optional author's note displayed before this scene's prose..."
+          className="w-full px-3 py-2 text-sm border border-neutral-300 rounded-lg bg-white resize-y focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+        />
+      </div>
+
+      <div>
         <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
           <label className="block text-xs font-medium text-[#111827]">
             Scene Output (Prose)
@@ -198,6 +220,24 @@ export const SceneInlineEditor: React.FC<SceneInlineEditorProps> = ({
         <p className="text-[11px] text-[#6B7280] mt-1">
           Separate paragraphs with a blank line.
         </p>
+      </div>
+
+      <div>
+        <label
+          htmlFor={`scene-suffix-note-${turn.id}`}
+          className="block text-xs font-medium text-[#111827] mb-1"
+        >
+          Ending Author&apos;s Note (Suffix, optional)
+        </label>
+        <textarea
+          id={`scene-suffix-note-${turn.id}`}
+          rows={2}
+          maxLength={4000}
+          value={suffixNote}
+          onChange={(e) => setSuffixNote(e.target.value)}
+          placeholder="Optional author's note displayed after this scene's prose..."
+          className="w-full px-3 py-2 text-sm border border-neutral-300 rounded-lg bg-white resize-y focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+        />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

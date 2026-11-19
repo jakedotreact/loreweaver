@@ -9,6 +9,8 @@ const sampleProject: StoryProject = {
   setting: 'Highland Citadels',
   tone: 'Literary Adventure',
   premise: 'An archivist races to repair a failing celestial timepiece.',
+  prefixNote: 'Story opener note <script>bad()</script>',
+  suffixNote: 'Story closing note & epilogue.',
   protagonistId: 'char-1',
   updatedAt: 1000,
   savePoints: [],
@@ -22,6 +24,8 @@ const sampleProject: StoryProject = {
       activeCharacters: ['Mira'],
       userAction: null,
       prose: ['Dust drifted through the gears & brass arches.'],
+      prefixNote: 'Scene 1 opener note.',
+      suffixNote: 'Scene 1 closing note.',
       continuityNotes: ['Pocket barometer intact'],
       continuityWarning: null,
       timestamp: 1700000000000,
@@ -44,6 +48,8 @@ const sampleProject: StoryProject = {
       activeCharacters: ['Mira'],
       userAction: 'Descend to the canal lock.',
       prose: ['Water slapped against mossy masonry.'],
+      prefixNote: 'Scene 2 opener note.',
+      suffixNote: 'Scene 2 closing note.',
       continuityNotes: [],
       continuityWarning: null,
       selectedChoiceId: null,
@@ -57,6 +63,8 @@ const sampleProject: StoryProject = {
       chapterNumber: 1,
       title: 'The Halted Hour',
       summary: 'Mira discovers the fracture.',
+      prefixNote: 'Chapter 1 opener note.',
+      suffixNote: 'Chapter 1 closing note.',
       turnIds: ['t1'],
       mergedAt: 900,
     },
@@ -95,7 +103,7 @@ const sampleProject: StoryProject = {
 };
 
 describe('htmlExport utilities', () => {
-  it('escapes HTML injection and renders chapters, prompts, choices, and appendix', () => {
+  it('escapes HTML injection and renders chapters, author notes, prompts, choices, and appendix', () => {
     const html = generateStoryHtml(sampleProject, {
       includePrompts: true,
       includeChoices: true,
@@ -104,7 +112,20 @@ describe('htmlExport utilities', () => {
     });
 
     expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).not.toContain('<script>bad()</script>');
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).toContain('Story opener note &lt;script&gt;bad()&lt;/script&gt;');
+    expect(html).toContain('Story closing note &amp; epilogue.');
+    expect(html).toContain('Story Beginning Author&#39;s Note');
+    expect(html).toContain('Story Ending Author&#39;s Note');
+    expect(html).toContain('Chapter Beginning Author&#39;s Note');
+    expect(html).toContain('Chapter 1 opener note.');
+    expect(html).toContain('Chapter Ending Author&#39;s Note');
+    expect(html).toContain('Chapter 1 closing note.');
+    expect(html).toContain('Scene 1 opener note.');
+    expect(html).toContain('Scene 1 closing note.');
+    expect(html).toContain('Scene 2 opener note.');
+    expect(html).toContain('Scene 2 closing note.');
     expect(html).toContain('The Halted Hour');
     expect(html).toContain('Gutter Lanterns');
     expect(html).toContain('Initial Story Premise Prompt');
@@ -123,12 +144,16 @@ describe('htmlExport utilities', () => {
     });
 
     expect(html).toContain('Gutter Lanterns');
+    expect(html).toContain('Scene 2 opener note.');
+    expect(html).toContain('Scene 2 closing note.');
+    expect(html).not.toContain('Story closing note');
+    expect(html).not.toContain('Chapter 1 opener note.');
     expect(html).not.toContain('Pendulum Chamber');
     expect(html).not.toContain('Initial Story Premise Prompt');
     expect(html).not.toContain('Universe Appendix');
   });
 
-  it('supports filtering to a single chapter chapterId', () => {
+  it('supports filtering to a single chapter chapterId with chapter and scene notes', () => {
     const html = generateStoryHtml(sampleProject, {
       includePrompts: true,
       includeChoices: false,
@@ -138,6 +163,12 @@ describe('htmlExport utilities', () => {
     });
 
     expect(html).toContain('Pendulum Chamber');
+    expect(html).toContain('Chapter 1 opener note.');
+    expect(html).toContain('Chapter 1 closing note.');
+    expect(html).toContain('Scene 1 opener note.');
+    expect(html).toContain('Scene 1 closing note.');
+    expect(html).not.toContain('Story closing note');
+    expect(html).not.toContain('Scene 2 opener note.');
     expect(html).not.toContain('Gutter Lanterns');
   });
 });

@@ -13,13 +13,15 @@ import {
   X,
 } from 'lucide-react';
 import { UNIVERSE_TEMPLATES, UniverseTemplate } from '../data/presets';
+import { useModalScrollLock } from '../hooks/useModalScrollLock';
 import { ModelConfig, StoryProject, StorySnapshot } from '../types/story';
 import { createDefaultTagsForProject } from '../utils/ao3Tags';
 import { postJson } from '../utils/api';
 import { DictaquillButton } from './DictaquillButton';
+import { ImportStoryPanel } from './ImportStoryPanel';
 import { ModelConfigPanel } from './ModelConfigPanel';
 
-export type NewStoryModalMode = 'presets' | 'custom' | 'library';
+export type NewStoryModalMode = 'presets' | 'custom' | 'import' | 'library';
 
 interface SeedRow {
   id: string;
@@ -109,6 +111,8 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useModalScrollLock(isOpen);
+
   if (!isOpen) return null;
 
   const handleSelectPreset = (tpl: UniverseTemplate) => {
@@ -184,14 +188,14 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-hidden overscroll-contain"
       role="dialog"
       aria-modal="true"
       aria-labelledby="new-story-heading"
     >
-      <div className="w-full max-w-4xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden my-auto max-h-[90vh] flex flex-col">
+      <div className="w-full max-w-4xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Modal Header */}
-        <div className="px-6 py-5 border-b border-neutral-200 flex items-center justify-between gap-4">
+        <div className="px-6 py-5 border-b border-neutral-200 flex items-center justify-between gap-4 shrink-0">
           <div>
             <h2
               id="new-story-heading"
@@ -214,7 +218,7 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
         </div>
 
         {/* Mode Segmented Bar */}
-        <div className="px-6 pt-4 pb-3 border-b border-neutral-100 flex flex-wrap items-center justify-between gap-3">
+        <div className="px-6 pt-4 pb-3 border-b border-neutral-100 flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-neutral-100 rounded-lg">
             <button
               type="button"
@@ -240,6 +244,17 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
             </button>
             <button
               type="button"
+              onClick={() => setMode('import')}
+              className={`px-3.5 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                mode === 'import'
+                  ? 'bg-white text-[#111827] shadow-sm'
+                  : 'text-[#6B7280] hover:text-[#111827]'
+              }`}
+            >
+              Import URL / File
+            </button>
+            <button
+              type="button"
               onClick={() => setMode('library')}
               className={`px-3.5 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
                 mode === 'library'
@@ -253,7 +268,7 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
         </div>
 
         {/* Body */}
-        <div className="p-6 overflow-y-auto flex-1 space-y-5">
+        <div className="p-6 overflow-y-auto overscroll-contain flex-1 min-h-0 space-y-5">
           {mode !== 'library' && activeStory && (
             <div className="px-4 py-2.5 bg-[#F8FAFC] border border-neutral-200 rounded-lg flex flex-wrap items-center justify-between gap-2 text-xs text-[#4B5563]">
               <span>
@@ -461,6 +476,15 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
                 </div>
               )}
             </div>
+          ) : mode === 'import' ? (
+            <ImportStoryPanel
+              modelConfig={modelConfig}
+              onImportComplete={(importedProject) => {
+                onLoadProject(importedProject);
+                onClose();
+              }}
+              onCancel={onClose}
+            />
           ) : mode === 'presets' ? (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {UNIVERSE_TEMPLATES.map((tpl) => {

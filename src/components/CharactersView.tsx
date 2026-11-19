@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Pencil, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { useModalScrollLock } from '../hooks/useModalScrollLock';
 import { CharacterProfile, CharacterRole, ModelConfig, StoryProject } from '../types/story';
 import { postJson } from '../utils/api';
 
@@ -54,6 +55,8 @@ export const CharactersView: React.FC<CharactersViewProps> = ({
   const [notesForDeduction, setNotesForDeduction] = useState('');
   const [isDeducing, setIsDeducing] = useState(false);
   const [deduceError, setDeduceError] = useState<string | null>(null);
+
+  useModalScrollLock(Boolean(editingChar));
 
   const filteredCharacters = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -355,13 +358,13 @@ export const CharactersView: React.FC<CharactersViewProps> = ({
       {/* Character Editor Modal */}
       {editingChar && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 overflow-y-auto"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 overflow-hidden overscroll-contain"
           role="dialog"
           aria-modal="true"
           aria-labelledby="edit-char-title"
         >
-          <div className="w-full max-w-2xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden my-auto max-h-[90vh] flex flex-col">
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between gap-4">
+          <div className="w-full max-w-2xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between gap-4 shrink-0">
               <div>
                 <h2
                   id="edit-char-title"
@@ -384,7 +387,7 @@ export const CharactersView: React.FC<CharactersViewProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleSaveCharacter} className="p-6 overflow-y-auto space-y-5 flex-1">
+            <form onSubmit={handleSaveCharacter} className="p-6 overflow-y-auto overscroll-contain space-y-5 flex-1 min-h-0">
               {deduceError && (
                 <div className="p-3 text-sm text-[#991B1B] bg-[#FEF2F2] border border-[#FECACA] rounded-lg">
                   {deduceError}

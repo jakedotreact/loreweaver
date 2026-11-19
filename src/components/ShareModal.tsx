@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { formatReadableFirestoreError, useAuth } from '../contexts/AuthContext';
+import { useModalScrollLock } from '../hooks/useModalScrollLock';
 import {
   SharedWork,
   ShareScope,
@@ -142,6 +143,8 @@ export const ShareModal: React.FC<ShareModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [target, onClose]);
 
+  useModalScrollLock(Boolean(target));
+
   useEffect(() => {
     if (!target || !info || !user) {
       setExistingShare(null);
@@ -268,7 +271,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-hidden overscroll-contain"
       role="dialog"
       aria-modal="true"
       aria-labelledby="share-work-heading"
@@ -276,9 +279,9 @@ export const ShareModal: React.FC<ShareModalProps> = ({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden my-auto">
+      <div className="w-full max-w-xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-neutral-200 flex items-start justify-between gap-4">
+        <div className="px-6 py-4 border-b border-neutral-200 flex items-start justify-between gap-4 shrink-0">
           <div className="flex items-start gap-3 min-w-0">
             <Share2 className="w-5 h-5 text-[#1D4ED8] shrink-0 mt-1" />
             <div className="min-w-0">
@@ -305,7 +308,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
         </div>
 
         {/* Body */}
-        <div className="p-6 space-y-5">
+        <div className="p-6 space-y-5 overflow-y-auto overscroll-contain flex-1 min-h-0">
           {(error || authError || syncError) && (
             <div
               role="alert"

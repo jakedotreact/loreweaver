@@ -23,6 +23,7 @@ interface SavePointsViewProps {
   onRestoreSavePoint: (saveId: string) => void;
   onDeleteSavePoint: (saveId: string) => void;
   onImportProject: (project: StoryProject) => void;
+  onOpenImportStory?: () => void;
   onOpenHtmlExport: () => void;
 }
 
@@ -32,6 +33,7 @@ export const SavePointsView: React.FC<SavePointsViewProps> = ({
   onRestoreSavePoint,
   onDeleteSavePoint,
   onImportProject,
+  onOpenImportStory,
   onOpenHtmlExport,
 }) => {
   const [label, setLabel] = useState('');
@@ -220,6 +222,16 @@ export const SavePointsView: React.FC<SavePointsViewProps> = ({
         className="pt-6 border-t border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
       >
         <div className="flex flex-wrap items-center gap-2.5">
+          {onOpenImportStory && (
+            <button
+              type="button"
+              onClick={onOpenImportStory}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <Upload className="w-4 h-4 text-[#1D4ED8]" />
+              Import URL / Doc
+            </button>
+          )}
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}

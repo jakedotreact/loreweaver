@@ -8,6 +8,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import { useModalScrollLock } from '../hooks/useModalScrollLock';
 import {
   Ao3Category,
   Ao3Rating,
@@ -197,6 +198,8 @@ export const StoryTagsModal: React.FC<StoryTagsModalProps> = ({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isOpen, onClose]);
 
+  useModalScrollLock(isOpen && Boolean(story));
+
   if (!isOpen || !story) return null;
 
   const toggleWarning = (w: Ao3Warning) => {
@@ -249,13 +252,13 @@ export const StoryTagsModal: React.FC<StoryTagsModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-4 overflow-hidden overscroll-contain"
       role="dialog"
       aria-modal="true"
       aria-labelledby="story-tags-modal-title"
     >
       <div className="bg-white border border-neutral-200 rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden">
-        <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between gap-4">
+        <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between gap-4 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
             <Tag className="w-4 h-4 text-[#1D4ED8] shrink-0" />
             <div className="min-w-0">
@@ -278,7 +281,7 @@ export const StoryTagsModal: React.FC<StoryTagsModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="overflow-y-auto px-6 py-5 space-y-6">
+        <form onSubmit={handleSubmit} className="overflow-y-auto overscroll-contain flex-1 min-h-0 px-6 py-5 space-y-6">
           {/* Visibility Toggle: Public Story Index vs Private */}
           <fieldset className="p-4 border border-neutral-200 rounded-xl bg-[#F8FAFC] space-y-3">
             <legend className="text-xs font-semibold text-[#111827] px-1">

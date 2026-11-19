@@ -104,6 +104,8 @@ service cloud.firestore {
           'setting',
           'tone',
           'premise',
+          'prefixNote',
+          'suffixNote',
           'protagonistId',
           'turns',
           'characters',
@@ -135,6 +137,8 @@ service cloud.firestore {
         && data.tone.size() <= 200
         && data.premise is string
         && data.premise.size() <= 4000
+        && (!('prefixNote' in data) || (data.prefixNote is string && data.prefixNote.size() <= 4000))
+        && (!('suffixNote' in data) || (data.suffixNote is string && data.suffixNote.size() <= 4000))
         && data.protagonistId is string
         && data.protagonistId.size() <= 128
         && data.turns is list
@@ -241,6 +245,8 @@ service cloud.firestore {
           'setting',
           'tone',
           'premise',
+          'prefixNote',
+          'suffixNote',
           'isPrivate',
           'tags',
           'turns',
@@ -271,6 +277,8 @@ service cloud.firestore {
         && data.tone.size() <= 200
         && data.premise is string
         && data.premise.size() <= 4000
+        && (!('prefixNote' in data) || (data.prefixNote is string && data.prefixNote.size() <= 4000))
+        && (!('suffixNote' in data) || (data.suffixNote is string && data.suffixNote.size() <= 4000))
         && data.isPrivate is bool
         && isValidAo3Tags(data.tags)
         && data.turns is list
@@ -444,6 +452,8 @@ service cloud.firestore {
           'tone',
           'premise',
           'summary',
+          'prefixNote',
+          'suffixNote',
           'turns',
           'chapters',
           'characters',
@@ -477,6 +487,8 @@ service cloud.firestore {
         && data.premise.size() <= 4000
         && data.summary is string
         && data.summary.size() <= 1000
+        && (!('prefixNote' in data) || (data.prefixNote is string && data.prefixNote.size() <= 4000))
+        && (!('suffixNote' in data) || (data.suffixNote is string && data.suffixNote.size() <= 4000))
         && data.turns is list
         && data.turns.size() >= 1
         && data.turns.size() <= 200
@@ -524,6 +536,8 @@ service cloud.firestore {
           'setting',
           'tone',
           'premise',
+          'prefixNote',
+          'suffixNote',
           'protagonistId',
           'turns',
           'characters',
@@ -554,6 +568,8 @@ service cloud.firestore {
         && data.tone.size() <= 200
         && data.premise is string
         && data.premise.size() <= 4000
+        && (!('prefixNote' in data) || (data.prefixNote is string && data.prefixNote.size() <= 4000))
+        && (!('suffixNote' in data) || (data.suffixNote is string && data.suffixNote.size() <= 4000))
         && data.protagonistId is string
         && data.protagonistId.size() <= 128
         && data.turns is list
@@ -652,6 +668,8 @@ service cloud.firestore {
             'setting',
             'tone',
             'premise',
+            'prefixNote',
+            'suffixNote',
             'protagonistId',
             'turns',
             'characters',
@@ -755,6 +773,8 @@ service cloud.firestore {
           'tone',
           'premise',
           'summary',
+          'prefixNote',
+          'suffixNote',
           'turns',
           'chapters',
           'characters',
@@ -795,6 +815,8 @@ service cloud.firestore {
           'setting',
           'tone',
           'premise',
+          'prefixNote',
+          'suffixNote',
           'protagonistId',
           'turns',
           'characters',
@@ -881,6 +903,8 @@ service cloud.firestore {
               'setting',
               'tone',
               'premise',
+              'prefixNote',
+              'suffixNote',
               'isPrivate',
               'tags',
               'turns',

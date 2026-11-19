@@ -15,6 +15,7 @@ import { CharactersView } from './components/CharactersView';
 import { CollaborationModal } from './components/CollaborationModal';
 import { CrossIndexView } from './components/CrossIndexView';
 import { HtmlExportModal } from './components/HtmlExportModal';
+import { CommentAddPayload } from './components/CommentsSection';
 import { LandingPage } from './components/LandingPage';
 import { NewStoryModal, NewStoryModalMode } from './components/NewStoryModal';
 import { PublicStoryView } from './components/PublicStoryView';
@@ -37,12 +38,14 @@ import {
   getPublicStoryIdForProject,
   loadLocalCommunityState,
   LocalCommunityState,
+  resolveDisplayUsername,
   saveLocalCommunityState,
 } from './utils/communityStore';
 import { buildCollabUrl, buildShareUrl, parseRouteLinks } from './utils/storyLinks';
 import {
   CharacterProfile,
   CollaborationSession,
+  CommentTargetType,
   ContinuityAuditReport,
   CrossIndexEntry,
   ModelConfig,
@@ -50,12 +53,15 @@ import {
   SavePoint,
   StoryChapter,
   StoryComment,
+  StoryDisplayMode,
   StoryIllustration,
   StoryProject,
   StorySnapshot,
+  StorySubscription,
   StoryTags,
   StoryTurn,
   TtsVoiceName,
+  UserCollection,
 } from './types/story';
 
 const LEGACY_STORAGE_KEY = 'folio-canon-active-project-v1';
@@ -64,6 +70,19 @@ const ACTIVE_STORY_ID_KEY = 'folio-canon-active-story-id-v1';
 const MODEL_CONFIG_KEY = 'folio-canon-model-config-v1';
 const TTS_VOICE_KEY = 'folio-canon-tts-voice-v1';
 const AUTO_PLAY_NARRATION_KEY = 'folio-canon-autoplay-narration-v1';
+const DISPLAY_MODE_KEY = 'folio-canon-display-mode-v1';
+
+function loadInitialDisplayMode(): StoryDisplayMode {
+  try {
+    const raw = localStorage.getItem(DISPLAY_MODE_KEY);
+    if (raw === 'scene' || raw === 'chapters' || raw === 'story') {
+      return raw;
+    }
+  } catch {
+    // Ignore storage error
+  }
+  return 'story';
+}
 
 const VALID_TTS_VOICES: ReadonlySet<TtsVoiceName> = new Set([
   'Kore',
@@ -217,6 +236,8 @@ function extractSnapshot(project: StoryProject): StorySnapshot {
     setting: project.setting,
     tone: project.tone,
     premise: project.premise,
+    prefixNote: project.prefixNote,
+    suffixNote: project.suffixNote,
     protagonistId: project.protagonistId,
     turns: JSON.parse(JSON.stringify(project.turns)),
     characters: JSON.parse(JSON.stringify(project.characters)),
@@ -285,6 +306,12 @@ export default function App() {
     deleteStoryComment,
     hasUserGivenKudo,
     giveStoryKudo,
+    loadCollections,
+    upsertCollection,
+    deleteCollection,
+    loadSubscriptions,
+    upsertSubscription,
+    deleteSubscription,
   } = useAuth();
 
   const [library, setLibrary] = useState<{ stories: StoryProject[]; activeId: string }>(
@@ -294,6 +321,8 @@ export default function App() {
     library.stories.find((s) => s.id === library.activeId) ?? library.stories[0];
 
   const [modelConfig, setModelConfig] = useState<ModelConfig>(loadInitialModelConfig);
+  const [storyDisplayMode, setStoryDisplayMode] =
+    useState<StoryDisplayMode>(loadInitialDisplayMode);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('discover');
   const [isNewStoryOpen, setIsNewStoryOpen] = useState(false);
   const [newStoryInitialMode, setNewStoryInitialMode] =
@@ -340,6 +369,14 @@ export default function App() {
   useEffect(() => {
     saveLocalCommunityState(communityState);
   }, [communityState]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DISPLAY_MODE_KEY, storyDisplayMode);
+    } catch {
+      // Ignore storage error
+    }
+  }, [storyDisplayMode]);
 
   useEffect(() => {
     if (!firebaseConfigured) return;
@@ -513,7 +550,69 @@ export default function App() {
 
     void (async () => {
       try {
-        const cloudStories = await loadCloudStories();
+        if (!userSettings.username && communityState.username.trim()) {
+          void updateUserSettings({
+            username: communityState.username.trim().slice(0, 40),
+          }).catch(() => {});
+        } else if (userSettings.username && !communityState.username.trim()) {
+          setCommunityState((prev) => ({
+            ...prev,
+            username: userSettings.username || '',
+          }));
+        }
+
+        const [cloudCollections, cloudSubscriptions, cloudStories] = await Promise.all([
+          loadCollections().catch(() => [] as UserCollection[]),
+          loadSubscriptions().catch(() => [] as StorySubscription[]),
+          loadCloudStories(),
+        ]);
+
+        if (cloudCollections.length > 0 || communityState.collections.length > 0) {
+          const colMap = new Map<string, UserCollection>();
+          for (const lc of communityState.collections) colMap.set(lc.id, lc);
+          for (const cc of cloudCollections) {
+            const existing = colMap.get(cc.id);
+            if (!existing || cc.updatedAtMs >= existing.updatedAtMs) {
+              colMap.set(cc.id, cc);
+            }
+          }
+          const cloudColIds = new Set(cloudCollections.map((c) => c.id));
+          for (const lc of communityState.collections) {
+            if (!cloudColIds.has(lc.id)) {
+              void upsertCollection(lc).catch(() => {});
+            }
+          }
+          setCommunityState((prev) => ({
+            ...prev,
+            collections: Array.from(colMap.values()).sort(
+              (a, b) => b.updatedAtMs - a.updatedAtMs,
+            ),
+          }));
+        }
+
+        if (cloudSubscriptions.length > 0 || communityState.subscriptions.length > 0) {
+          const subMap = new Map<string, StorySubscription>();
+          for (const ls of communityState.subscriptions) subMap.set(ls.storyId, ls);
+          for (const cs of cloudSubscriptions) {
+            const existing = subMap.get(cs.storyId);
+            if (!existing || cs.updatedAtMs >= existing.updatedAtMs) {
+              subMap.set(cs.storyId, cs);
+            }
+          }
+          const cloudSubIds = new Set(cloudSubscriptions.map((s) => s.storyId));
+          for (const ls of communityState.subscriptions) {
+            if (!cloudSubIds.has(ls.storyId)) {
+              void upsertSubscription(ls).catch(() => {});
+            }
+          }
+          setCommunityState((prev) => ({
+            ...prev,
+            subscriptions: Array.from(subMap.values()).sort(
+              (a, b) => b.updatedAtMs - a.updatedAtMs,
+            ),
+          }));
+        }
+
         if (cloudStories.length === 0) {
           // Seed cloud with local library on first login
           for (const localStory of library.stories) {
@@ -662,10 +761,26 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id, project.turns, project.tone, speech.voice, speech.precomputeItems]);
 
+  const customUsernameValue = (
+    userSettings?.username ||
+    communityState.username ||
+    ''
+  ).trim();
+  const activeUsername = resolveDisplayUsername({
+    customUsername: userSettings?.username,
+    localUsername: communityState.username,
+    oauthDisplayName: user?.displayName,
+    fallback: 'Reader',
+  });
+  const currentReaderUid = user?.uid || communityState.anonClientId;
+
   const collabRoom = useCollabRoom({
     collabId: activeCollabId,
     clientId: collabClientIdRef.current,
-    displayName: user?.displayName || user?.email?.split('@')[0] || 'Collaborator',
+    displayName:
+      activeUsername !== 'Reader'
+        ? activeUsername
+        : user?.email?.split('@')[0] || 'Collaborator',
     enabled: Boolean(activeCollabId && user && collabSession),
   });
 
@@ -1193,29 +1308,35 @@ export default function App() {
 
   const handleLoadNewProject = (newProj: StoryProject) => {
     speech.stop();
-    let createdNormalized: StoryProject | null = null;
-    setLibrary((prev) => {
-      const usedIds = new Set(prev.stories.map((s) => s.id));
-      const normalized = normalizeProject(newProj, usedIds);
-      createdNormalized = normalized;
-      return {
-        stories: [normalized, ...prev.stories],
-        activeId: normalized.id,
-      };
-    });
-    if (user && createdNormalized) {
-      const projToSync = createdNormalized as StoryProject;
-      void syncStoryToCloud(projToSync).catch(() => {});
-      void updateUserSettings({ activeStoryId: projToSync.id }).catch(() => {});
+    const usedIds = new Set(library.stories.map((s) => s.id));
+    const normalized = normalizeProject(newProj, usedIds);
+    setLibrary((prev) => ({
+      stories: [normalized, ...prev.stories],
+      activeId: normalized.id,
+    }));
+    if (firebaseConfigured && user) {
+      void syncStoryToCloud(normalized).catch(() => {});
+      void updateUserSettings({ activeStoryId: normalized.id }).catch(() => {});
+      if (normalized.isPrivate !== true) {
+        void syncPublicStoryListing(normalized)
+          .then((listing) => {
+            if (!listing || listing.isPrivate) return;
+            setCloudPublicStories((prev) => [
+              listing,
+              ...prev.filter((w) => w.id !== listing.id),
+            ]);
+          })
+          .catch(() => {});
+      }
     }
     setAuditReport(null);
     setAdvanceError(null);
     setLastFailedAction(null);
     setRewriteError(null);
     setActiveTab('story');
-    if (newProj.turns.length === 1 && newProj.turns[0]) {
+    if (normalized.turns.length === 1 && normalized.turns[0]) {
       void speech.precomputeAndMaybePlay(
-        buildTurnSpeechItem(newProj.turns[0], newProj.tone),
+        buildTurnSpeechItem(normalized.turns[0], normalized.tone),
       );
     }
   };
@@ -1279,12 +1400,27 @@ export default function App() {
     window.setTimeout(() => setCopiedBannerLink(null), 1800);
   };
 
+  const handleChangeUsername = useCallback(
+    async (nextUsername: string) => {
+      const cleaned = nextUsername.trim().slice(0, 40);
+      setCommunityState((prev) => ({
+        ...prev,
+        username: cleaned,
+      }));
+      if (user) {
+        await updateUserSettings({ username: cleaned });
+      }
+    },
+    [user, updateUserSettings],
+  );
+
   const publicStoriesIndex = buildMergedPublicStoryIndex({
     localLibraryStories: library.stories,
     cloudPublicStories,
     communityState,
     currentAuthorUid: user?.uid,
-    currentAuthorName: user?.displayName || undefined,
+    currentAuthorName:
+      activeUsername !== 'Reader' ? activeUsername : user?.displayName || undefined,
   });
 
   const privateDraftCount = library.stories.filter(
@@ -1298,6 +1434,150 @@ export default function App() {
       .map(([k]) => k),
   ]);
 
+  const subscribedIdSet = new Set(
+    communityState.subscriptions.map((s) => s.storyId),
+  );
+
+  const handleToggleSubscribe = useCallback(
+    (work: {
+      id: string;
+      title: string;
+      authorName: string;
+      turnsLength: number;
+      chaptersLength: number;
+    }) => {
+      const exists = communityState.subscriptions.some(
+        (s) => s.storyId === work.id,
+      );
+      if (exists) {
+        setCommunityState((prev) => ({
+          ...prev,
+          subscriptions: prev.subscriptions.filter((s) => s.storyId !== work.id),
+        }));
+        if (firebaseConfigured && user) {
+          void deleteSubscription(work.id).catch(() => {});
+        }
+        return;
+      }
+
+      const now = Date.now();
+      const newSub: StorySubscription = {
+        storyId: work.id,
+        storyTitle: work.title.slice(0, 200) || 'Untitled Story',
+        authorName: work.authorName.slice(0, 120) || 'Author',
+        lastSeenTurnCount: Math.max(0, work.turnsLength),
+        lastSeenChapterCount: Math.max(0, work.chaptersLength),
+        subscribedAtMs: now,
+        updatedAtMs: now,
+      };
+      setCommunityState((prev) => ({
+        ...prev,
+        subscriptions: [newSub, ...prev.subscriptions],
+      }));
+      if (firebaseConfigured && user) {
+        void upsertSubscription(newSub).catch(() => {});
+      }
+    },
+    [
+      communityState.subscriptions,
+      deleteSubscription,
+      firebaseConfigured,
+      upsertSubscription,
+      user,
+    ],
+  );
+
+  const handleCreateCollection = useCallback(
+    (payload: { name: string; description: string; isPrivate: boolean }) => {
+      const cleanName = payload.name.trim().slice(0, 100);
+      if (!cleanName) return;
+      const now = Date.now();
+      const newCol: UserCollection = {
+        id: `col-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        ownerUid: user?.uid || 'local-reader',
+        name: cleanName,
+        description: payload.description.trim().slice(0, 500),
+        isPrivate: payload.isPrivate,
+        storyIds: [],
+        createdAtMs: now,
+        updatedAtMs: now,
+      };
+      setCommunityState((prev) => ({
+        ...prev,
+        collections: [newCol, ...prev.collections],
+      }));
+      if (firebaseConfigured && user) {
+        void upsertCollection(newCol).catch(() => {});
+      }
+    },
+    [firebaseConfigured, upsertCollection, user],
+  );
+
+  const handleQuickCreateCollection = useCallback(
+    (name: string, storyId: string) => {
+      const cleanName = name.trim().slice(0, 100);
+      if (!cleanName) return;
+      const now = Date.now();
+      const newCol: UserCollection = {
+        id: `col-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        ownerUid: user?.uid || 'local-reader',
+        name: cleanName,
+        description: '',
+        isPrivate: true,
+        storyIds: [storyId],
+        createdAtMs: now,
+        updatedAtMs: now,
+      };
+      setCommunityState((prev) => ({
+        ...prev,
+        collections: [newCol, ...prev.collections],
+      }));
+      if (firebaseConfigured && user) {
+        void upsertCollection(newCol).catch(() => {});
+      }
+    },
+    [firebaseConfigured, upsertCollection, user],
+  );
+
+  const handleDeleteCollection = useCallback(
+    (collectionId: string) => {
+      setCommunityState((prev) => ({
+        ...prev,
+        collections: prev.collections.filter((c) => c.id !== collectionId),
+      }));
+      if (firebaseConfigured && user) {
+        void deleteCollection(collectionId).catch(() => {});
+      }
+    },
+    [deleteCollection, firebaseConfigured, user],
+  );
+
+  const handleToggleCollectionStory = useCallback(
+    (collectionId: string, storyId: string) => {
+      let updatedTarget: UserCollection | null = null;
+      setCommunityState((prev) => ({
+        ...prev,
+        collections: prev.collections.map((col) => {
+          if (col.id !== collectionId) return col;
+          const exists = col.storyIds.includes(storyId);
+          const nextIds = exists
+            ? col.storyIds.filter((id) => id !== storyId)
+            : [...col.storyIds, storyId];
+          updatedTarget = {
+            ...col,
+            storyIds: nextIds,
+            updatedAtMs: Date.now(),
+          };
+          return updatedTarget;
+        }),
+      }));
+      if (updatedTarget && firebaseConfigured && user) {
+        void upsertCollection(updatedTarget).catch(() => {});
+      }
+    },
+    [firebaseConfigured, upsertCollection, user],
+  );
+
   const handleOpenPublicStory = (publicId: string) => {
     try {
       const url = new URL(window.location.href);
@@ -1310,6 +1590,34 @@ export default function App() {
     }
     setSelectedPublicStoryId(publicId);
     setActiveTab('discover');
+
+    const matchedLocal = publicStoriesIndex.find((s) => s.id === publicId);
+    if (matchedLocal && subscribedIdSet.has(publicId)) {
+      const existingSub = communityState.subscriptions.find(
+        (s) => s.storyId === publicId,
+      );
+      if (
+        existingSub &&
+        matchedLocal.turns.length > existingSub.lastSeenTurnCount
+      ) {
+        const refreshed: StorySubscription = {
+          ...existingSub,
+          lastSeenTurnCount: matchedLocal.turns.length,
+          lastSeenChapterCount: matchedLocal.chapters.length,
+          updatedAtMs: Date.now(),
+        };
+        setCommunityState((prev) => ({
+          ...prev,
+          subscriptions: prev.subscriptions.map((s) =>
+            s.storyId === publicId ? refreshed : s,
+          ),
+        }));
+        if (firebaseConfigured && user) {
+          void upsertSubscription(refreshed).catch(() => {});
+        }
+      }
+    }
+
     if (firebaseConfigured) {
       void fetchPublicStory(publicId)
         .then((work) => {
@@ -1325,15 +1633,13 @@ export default function App() {
           }
         })
         .catch(() => {});
-      if (user) {
-        void hasUserGivenKudo(publicId)
-          .then((given) => {
-            if (given) {
-              setRemoteKudosGiven((prev) => ({ ...prev, [publicId]: true }));
-            }
-          })
-          .catch(() => {});
-      }
+      void hasUserGivenKudo(publicId, communityState.anonClientId)
+        .then((given) => {
+          if (given) {
+            setRemoteKudosGiven((prev) => ({ ...prev, [publicId]: true }));
+          }
+        })
+        .catch(() => {});
     }
   };
 
@@ -1382,7 +1688,28 @@ export default function App() {
     }
   };
 
-  const handleGiveStoryKudo = async (publicId: string) => {
+  const handleUpdateStoryNotes = (notes: {
+    prefixNote?: string;
+    suffixNote?: string;
+  }) => {
+    const cleanPrefix = notes.prefixNote?.trim()
+      ? notes.prefixNote.trim().slice(0, 4000)
+      : undefined;
+    const cleanSuffix = notes.suffixNote?.trim()
+      ? notes.suffixNote.trim().slice(0, 4000)
+      : undefined;
+    updateProjectById(project.id, (prev) => ({
+      ...prev,
+      prefixNote: cleanPrefix,
+      suffixNote: cleanSuffix,
+      updatedAt: Date.now(),
+    }));
+  };
+
+  const handleGiveStoryKudo = async (
+    publicId: string,
+    options?: { anonymous?: boolean },
+  ) => {
     if (givenKudoSet.has(publicId)) return;
     const targetStory =
       publicStoriesIndex.find((s) => s.id === publicId) ?? remotePublicStory;
@@ -1401,9 +1728,12 @@ export default function App() {
       };
     });
 
-    if (firebaseConfigured && user) {
+    if (firebaseConfigured) {
       try {
-        const nextCount = await giveStoryKudo(publicId);
+        const nextCount = await giveStoryKudo(publicId, {
+          anonymous: options?.anonymous ?? !user,
+          anonToken: communityState.anonClientId,
+        });
         setRemoteKudosGiven((prev) => ({ ...prev, [publicId]: true }));
         setCloudPublicStories((prev) =>
           prev.map((w) =>
@@ -1418,19 +1748,32 @@ export default function App() {
 
   const handleAddStoryComment = async (
     publicId: string,
-    payload: {
-      body: string;
-      authorName?: string;
-      chapterOrSceneLabel?: string;
-      parentCommentId?: string;
-    },
+    payload: CommentAddPayload,
   ) => {
     const cleanBody = payload.body.trim().slice(0, 4000);
     if (!cleanBody) return;
 
+    const targetType: CommentTargetType =
+      payload.targetType === 'chapter' || payload.targetType === 'scene'
+        ? payload.targetType
+        : 'story';
+    const targetId = (payload.targetId || publicId).trim().slice(0, 128);
+    const targetLabel = (
+      payload.targetLabel ||
+      payload.chapterOrSceneLabel ||
+      ''
+    )
+      .trim()
+      .slice(0, 160);
+
     if (firebaseConfigured && user) {
       try {
-        const saved = await addStoryComment(publicId, payload);
+        const saved = await addStoryComment(publicId, {
+          ...payload,
+          targetType,
+          targetId,
+          targetLabel: targetLabel || undefined,
+        });
         setRemoteCommentsByStory((prev) => ({
           ...prev,
           [publicId]: [...(prev[publicId] ?? []), saved],
@@ -1450,11 +1793,13 @@ export default function App() {
     const localComment: StoryComment = {
       id: `cmt-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
       storyId: publicId,
-      authorUid: user?.uid || 'local-reader',
-      authorName:
-        (payload.authorName?.trim() || user?.displayName || 'Reader').slice(0, 120),
+      authorUid: currentReaderUid,
+      authorName: (payload.authorName?.trim() || activeUsername).slice(0, 120),
       body: cleanBody,
-      chapterOrSceneLabel: payload.chapterOrSceneLabel?.trim() || undefined,
+      targetType,
+      targetId,
+      targetLabel: targetLabel || undefined,
+      chapterOrSceneLabel: targetLabel || undefined,
       parentCommentId: payload.parentCommentId?.trim() || undefined,
       storyIsPrivate: false,
       createdAtMs: now,
@@ -1492,6 +1837,15 @@ export default function App() {
     }
   };
 
+  const getMergedCommentsForStory = (publicId: string): StoryComment[] => {
+    const localList = communityState.commentsByStoryId[publicId] ?? [];
+    const remoteList = remoteCommentsByStory[publicId] ?? [];
+    const merged = new Map<string, StoryComment>();
+    for (const c of localList) merged.set(c.id, c);
+    for (const c of remoteList) merged.set(c.id, c);
+    return Array.from(merged.values()).sort((a, b) => a.createdAtMs - b.createdAtMs);
+  };
+
   const activePublicStory =
     selectedPublicStoryId
       ? publicStoriesIndex.find((s) => s.id === selectedPublicStoryId) ??
@@ -1502,15 +1856,12 @@ export default function App() {
           : null)
       : null;
 
-  const activePublicComments: StoryComment[] = (() => {
-    if (!activePublicStory) return [];
-    const localList = communityState.commentsByStoryId[activePublicStory.id] ?? [];
-    const remoteList = remoteCommentsByStory[activePublicStory.id] ?? [];
-    const merged = new Map<string, StoryComment>();
-    for (const c of localList) merged.set(c.id, c);
-    for (const c of remoteList) merged.set(c.id, c);
-    return Array.from(merged.values()).sort((a, b) => a.createdAtMs - b.createdAtMs);
-  })();
+  const activePublicComments: StoryComment[] = activePublicStory
+    ? getMergedCommentsForStory(activePublicStory.id)
+    : [];
+
+  const activeStudioPublicId = getPublicStoryIdForProject(project);
+  const activeStudioComments = getMergedCommentsForStory(activeStudioPublicId);
 
   if (activeShareId) {
     return (
@@ -1646,6 +1997,7 @@ export default function App() {
         onOpenNewStory={() => handleOpenNewStoryModal('presets')}
         onOpenStudioSettings={() => setIsStudioSettingsOpen(true)}
         onOpenAccountSettings={() => setIsAccountModalOpen(true)}
+        accountUsername={customUsernameValue || user?.displayName || undefined}
       />
 
       {activeCollabId && collabSession && (
@@ -1760,8 +2112,9 @@ export default function App() {
               story={activePublicStory}
               comments={activePublicComments}
               hasGivenKudo={givenKudoSet.has(activePublicStory.id)}
-              currentReaderUid={user?.uid || 'local-reader'}
-              currentReaderName={user?.displayName || 'Reader'}
+              isSignedIn={Boolean(user)}
+              currentReaderUid={currentReaderUid}
+              currentReaderName={activeUsername}
               isOwner={
                 Boolean(user && activePublicStory.ownerUid === user.uid) ||
                 library.stories.some(
@@ -1770,6 +2123,21 @@ export default function App() {
                     getPublicStoryIdForProject(ls) === activePublicStory.id,
                 )
               }
+              displayMode={storyDisplayMode}
+              onChangeDisplayMode={setStoryDisplayMode}
+              collections={communityState.collections}
+              isSubscribed={subscribedIdSet.has(activePublicStory.id)}
+              onToggleSubscribe={() =>
+                handleToggleSubscribe({
+                  id: activePublicStory.id,
+                  title: activePublicStory.title,
+                  authorName: activePublicStory.authorName,
+                  turnsLength: activePublicStory.turns.length,
+                  chaptersLength: activePublicStory.chapters.length,
+                })
+              }
+              onToggleCollectionStory={handleToggleCollectionStory}
+              onQuickCreateCollection={handleQuickCreateCollection}
               onBackToIndex={handleExitPublicStory}
               onGiveKudo={handleGiveStoryKudo}
               onAddComment={handleAddStoryComment}
@@ -1792,9 +2160,24 @@ export default function App() {
               stories={publicStoriesIndex}
               privateDraftCount={privateDraftCount}
               givenKudoStoryIds={givenKudoSet}
+              collections={communityState.collections}
+              subscriptions={communityState.subscriptions}
+              onToggleSubscribe={(work) =>
+                handleToggleSubscribe({
+                  id: work.id,
+                  title: work.title,
+                  authorName: work.authorName,
+                  turnsLength: work.turns.length,
+                  chaptersLength: work.chapters.length,
+                })
+              }
+              onCreateCollection={handleCreateCollection}
+              onDeleteCollection={handleDeleteCollection}
+              onToggleCollectionStory={handleToggleCollectionStory}
               onOpenStory={handleOpenPublicStory}
               onEnterStudio={() => setActiveTab('story')}
               onOpenNewStory={() => handleOpenNewStoryModal('presets')}
+              onImportStory={() => handleOpenNewStoryModal('import')}
             />
           ))}
 
@@ -1831,6 +2214,29 @@ export default function App() {
               setShareTarget({ scope: 'scene', story: project, turn })
             }
             onEditTagsAndVisibility={() => setTagsModalStory(project)}
+            onUpdateStoryNotes={handleUpdateStoryNotes}
+            onUpdateChapters={handleUpdateChapters}
+            displayMode={storyDisplayMode}
+            onChangeDisplayMode={setStoryDisplayMode}
+            publicStoryId={activeStudioPublicId}
+            storyComments={activeStudioComments}
+            currentReaderUid={currentReaderUid}
+            currentReaderName={activeUsername}
+            onAddComment={handleAddStoryComment}
+            onDeleteComment={handleDeleteStoryComment}
+            collections={communityState.collections}
+            isSubscribed={subscribedIdSet.has(activeStudioPublicId)}
+            onToggleSubscribe={() =>
+              handleToggleSubscribe({
+                id: activeStudioPublicId,
+                title: project.title,
+                authorName: activeUsername,
+                turnsLength: project.turns.length,
+                chaptersLength: (project.chapters ?? []).length,
+              })
+            }
+            onToggleCollectionStory={handleToggleCollectionStory}
+            onQuickCreateCollection={handleQuickCreateCollection}
           />
         )}
 
@@ -1882,6 +2288,7 @@ export default function App() {
             onRestoreSavePoint={handleRestoreSavePoint}
             onDeleteSavePoint={handleDeleteSavePoint}
             onImportProject={handleLoadNewProject}
+            onOpenImportStory={() => handleOpenNewStoryModal('import')}
             onOpenHtmlExport={() => handleOpenHtmlExport()}
           />
         )}
@@ -1943,14 +2350,11 @@ export default function App() {
       <AccountSettingsModal
         isOpen={isAccountModalOpen}
         onClose={() => setIsAccountModalOpen(false)}
+        username={customUsernameValue}
+        onChangeUsername={handleChangeUsername}
         modelConfig={modelConfig}
         onChangeModelConfig={handleChangeModelConfig}
-        preferredVoice={speech.voice}
-        onChangeVoice={(nextVoice) => {
-          void speech.changeVoice(nextVoice);
-        }}
-        autoPlayNarration={speech.autoPlayOnReady}
-        onChangeAutoPlayNarration={speech.setAutoPlayOnReady}
+        onOpenStudioSettings={() => setIsStudioSettingsOpen(true)}
       />
 
       <ShareModal

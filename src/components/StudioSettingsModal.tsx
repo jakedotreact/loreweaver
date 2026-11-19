@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Settings, Shield, Volume2, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useModalScrollLock } from '../hooks/useModalScrollLock';
 import { ModelConfig, TtsVoiceName } from '../types/story';
 import { ModelConfigPanel } from './ModelConfigPanel';
 
@@ -46,11 +47,13 @@ export const StudioSettingsModal: React.FC<StudioSettingsModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
+  useModalScrollLock(isOpen);
+
   if (!isOpen) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-hidden overscroll-contain"
       role="dialog"
       aria-modal="true"
       aria-labelledby="studio-settings-heading"
@@ -58,7 +61,7 @@ export const StudioSettingsModal: React.FC<StudioSettingsModalProps> = ({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden my-auto max-h-[90vh] flex flex-col">
+      <div className="w-full max-w-xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-neutral-200 flex items-start justify-between gap-4 shrink-0">
           <div className="flex items-start gap-3">
@@ -86,7 +89,7 @@ export const StudioSettingsModal: React.FC<StudioSettingsModalProps> = ({
         </div>
 
         {/* Body */}
-        <div className="p-6 space-y-6 overflow-y-auto flex-1">
+        <div className="p-6 space-y-6 overflow-y-auto overscroll-contain flex-1 min-h-0">
           {/* Narration & Playback Section */}
           <section className="space-y-4">
             <div className="flex items-center gap-2 pb-2 border-b border-neutral-100">

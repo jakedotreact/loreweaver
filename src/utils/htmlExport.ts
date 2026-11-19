@@ -18,6 +18,20 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function renderAuthorNoteHtml(
+  label: string,
+  note?: string,
+): string {
+  const trimmed = note?.trim();
+  if (!trimmed) return '';
+  return `
+    <aside class="author-note">
+      <div class="author-note-label">${escapeHtml(label)}</div>
+      <div class="author-note-body">${escapeHtml(trimmed).replace(/\n/g, '<br />')}</div>
+    </aside>
+  `;
+}
+
 function renderTurnHtml(turn: StoryTurn, options: HtmlExportOptions, isMergedFlow: boolean): string {
   const parts: string[] = [];
 
@@ -75,11 +89,19 @@ function renderTurnHtml(turn: StoryTurn, options: HtmlExportOptions, isMergedFlo
     `);
   }
 
+  if (turn.prefixNote?.trim()) {
+    parts.push(renderAuthorNoteHtml("Scene Beginning Author's Note", turn.prefixNote));
+  }
+
   parts.push(`<div class="prose-block">`);
   for (const p of turn.prose) {
     parts.push(`<p>${escapeHtml(p)}</p>`);
   }
   parts.push(`</div>`);
+
+  if (turn.suffixNote?.trim()) {
+    parts.push(renderAuthorNoteHtml("Scene Ending Author's Note", turn.suffixNote));
+  }
 
   if (options.includeChoices && turn.choices.length > 0) {
     parts.push(`<div class="choices-block"><div class="choices-heading">Branching Prompts Offered</div><ul>`);
@@ -159,10 +181,12 @@ export function generateStoryHtml(project: StoryProject, options: HtmlExportOpti
           <h2>${escapeHtml(ch.title)}</h2>
           ${ch.summary ? `<p class="chapter-summary">${escapeHtml(ch.summary)}</p>` : ''}
         </header>
+        ${renderAuthorNoteHtml("Chapter Beginning Author's Note", ch.prefixNote)}
         ${chapterIllustrationHtml}
         <div class="chapter-body">
           ${chTurns.map((t) => renderTurnHtml(t, options, true)).join('\n')}
         </div>
+        ${renderAuthorNoteHtml("Chapter Ending Author's Note", ch.suffixNote)}
       </article>
     `);
   }
@@ -372,6 +396,27 @@ export function generateStoryHtml(project: StoryProject, options: HtmlExportOpti
       font-size: 13px;
       color: #92400e;
     }
+    .author-note {
+      margin: 16px 0 20px;
+      padding: 14px 18px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .author-note-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--accent);
+      margin-bottom: 5px;
+    }
+    .author-note-body {
+      line-height: 1.65;
+      color: var(--ink);
+    }
     .prose-block p {
       font-family: Georgia, "Times New Roman", serif;
       font-size: 17px;
@@ -480,7 +525,9 @@ export function generateStoryHtml(project: StoryProject, options: HtmlExportOpti
           : ''
       }
     </header>
+    ${!options.chapterId && !options.turnId ? renderAuthorNoteHtml("Story Beginning Author's Note", project.prefixNote) : ''}
     ${sectionsHtml.join('\n')}
+    ${!options.chapterId && !options.turnId ? renderAuthorNoteHtml("Story Ending Author's Note", project.suffixNote) : ''}
     ${appendixHtml}
   </main>
 </body>

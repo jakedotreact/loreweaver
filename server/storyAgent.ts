@@ -2155,6 +2155,201 @@ INSTRUCTIONS:
   };
 }
 
+export interface ImportedStoryEnrichmentPayload {
+  title?: string;
+  universe?: string;
+  setting?: string;
+  tone?: string;
+  premise?: string;
+  characters: Array<{
+    name: string;
+    role: 'Protagonist' | 'Companion' | 'Antagonist' | 'NPC';
+    origin: 'canon' | 'original';
+    summary: string;
+    pros: string[];
+    flaws: string[];
+    motivation: string;
+    voiceAndMannerisms: string;
+    status: string;
+    location: string;
+    inventory: string[];
+    relationships: Array<{ targetName: string; relation: string }>;
+  }>;
+  crossIndex: Array<{
+    category: CrossIndexCategory;
+    title: string;
+    detail: string;
+    tags: string[];
+    pinned: boolean;
+  }>;
+  tagsHint?: {
+    fandoms?: string[];
+    relationships?: string[];
+    characters?: string[];
+    freeforms?: string[];
+  };
+  continuationChoices?: Array<{
+    label: string;
+    intent: string;
+    consequenceHint: string;
+  }>;
+}
 
+export async function enrichImportedStory(
+  excerpt: {
+    title: string;
+    author?: string;
+    source: string;
+    universeHint?: string;
+    settingHint?: string;
+    toneHint?: string;
+    premiseHint?: string;
+    sampleText: string;
+  },
+  modelConfig?: Partial<ModelConfig>,
+): Promise<ImportedStoryEnrichmentPayload> {
+  const ai = getClient();
+  const { model, thinkingLevel } = resolveModelConfig(modelConfig, ThinkingLevel.LOW);
 
+  const prompt = `
+Imported Story Metadata:
+Title: ${excerpt.title}
+Author: ${excerpt.author || 'Unknown'}
+Source: ${excerpt.source}
+Universe Hint: ${excerpt.universeHint || '(Deduce from text)'}
+Setting Hint: ${excerpt.settingHint || '(Deduce from text)'}
+Tone Hint: ${excerpt.toneHint || '(Deduce from text)'}
+Premise Hint: ${excerpt.premiseHint || '(Summarize concisely from excerpt)'}
 
+Manuscript Excerpt:
+${excerpt.sampleText}
+
+Tasks:
+1. Identify the story's universe/fandom (or "Original Fiction"), setting/era, literary tone, and a crisp 2-3 sentence premise summary.
+2. Extract 2-6 key characters directly evidenced in the excerpt (including at least one Protagonist), detailing grounded strengths (pros), flaws, motivation, voice/mannerisms, current status, location, inventory, and relationships.
+3. Extract 3-6 essential Cross-Index canon anchors ('world_rule', 'location', 'item', 'timeline', 'plot_thread') grounded strictly in the excerpt.
+4. Suggest concise Archive-style fandoms, relationships (e.g. "A / B" or "A & B"), characters, and freeform trope tags.
+5. Propose 3 actionable continuation choices for the very next scene after this excerpt ends.
+`;
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: prompt,
+    config: {
+      systemInstruction:
+        'You are a literary archivist and continuity director. Analyze the provided story excerpt faithfully without inventing contradictory canon facts.',
+      ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          universe: { type: Type.STRING },
+          setting: { type: Type.STRING },
+          tone: { type: Type.STRING },
+          premise: { type: Type.STRING },
+          characters: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                name: { type: Type.STRING },
+                role: {
+                  type: Type.STRING,
+                  enum: ['Protagonist', 'Companion', 'Antagonist', 'NPC'],
+                },
+                origin: { type: Type.STRING, enum: ['canon', 'original'] },
+                summary: { type: Type.STRING },
+                pros: { type: Type.ARRAY, items: { type: Type.STRING } },
+                flaws: { type: Type.ARRAY, items: { type: Type.STRING } },
+                motivation: { type: Type.STRING },
+                voiceAndMannerisms: { type: Type.STRING },
+                status: { type: Type.STRING },
+                location: { type: Type.STRING },
+                inventory: { type: Type.ARRAY, items: { type: Type.STRING } },
+                relationships: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      targetName: { type: Type.STRING },
+                      relation: { type: Type.STRING },
+                    },
+                    required: ['targetName', 'relation'],
+                  },
+                },
+              },
+              required: [
+                'name',
+                'role',
+                'origin',
+                'summary',
+                'pros',
+                'flaws',
+                'motivation',
+                'voiceAndMannerisms',
+                'status',
+                'location',
+                'inventory',
+                'relationships',
+              ],
+            },
+          },
+          crossIndex: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                category: {
+                  type: Type.STRING,
+                  enum: [
+                    'world_rule',
+                    'character_state',
+                    'location',
+                    'item',
+                    'timeline',
+                    'plot_thread',
+                  ],
+                },
+                title: { type: Type.STRING },
+                detail: { type: Type.STRING },
+                tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+                pinned: { type: Type.BOOLEAN },
+              },
+              required: ['category', 'title', 'detail', 'tags', 'pinned'],
+            },
+          },
+          tagsHint: {
+            type: Type.OBJECT,
+            properties: {
+              fandoms: { type: Type.ARRAY, items: { type: Type.STRING } },
+              relationships: { type: Type.ARRAY, items: { type: Type.STRING } },
+              characters: { type: Type.ARRAY, items: { type: Type.STRING } },
+              freeforms: { type: Type.ARRAY, items: { type: Type.STRING } },
+            },
+          },
+          continuationChoices: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                label: { type: Type.STRING },
+                intent: { type: Type.STRING },
+                consequenceHint: { type: Type.STRING },
+              },
+              required: ['label', 'intent', 'consequenceHint'],
+            },
+          },
+        },
+        required: ['universe', 'setting', 'tone', 'premise', 'characters', 'crossIndex'],
+      },
+    },
+  });
+
+  const parsed = safeParseJson<ImportedStoryEnrichmentPayload>(
+    response.text,
+    'Failed to analyze imported manuscript.',
+  );
+
+  return parsed;
+}

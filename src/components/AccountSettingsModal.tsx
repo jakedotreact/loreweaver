@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAvailableModels } from '../hooks/useAvailableModels';
+import { useModalScrollLock } from '../hooks/useModalScrollLock';
 import { ModelConfig } from '../types/story';
 
 interface AccountSettingsModalProps {
@@ -72,6 +73,8 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, username, userSettings?.allowedModels, onClose]);
 
+  useModalScrollLock(isOpen);
+
   if (!isOpen) return null;
 
   const handleToggleAllowedModel = (modelId: string) => {
@@ -121,7 +124,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-hidden overscroll-contain"
       role="dialog"
       aria-modal="true"
       aria-labelledby="account-settings-heading"
@@ -129,7 +132,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden my-auto max-h-[90vh] flex flex-col">
+      <div className="w-full max-w-xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-neutral-200 flex items-start justify-between gap-4 shrink-0">
           <div className="flex items-start gap-3">
@@ -156,7 +159,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSaveProfile} className="p-6 space-y-6 overflow-y-auto flex-1">
+        <form onSubmit={handleSaveProfile} className="p-6 space-y-6 overflow-y-auto overscroll-contain flex-1 min-h-0">
           {(authError || syncError) && (
             <div
               role="alert"

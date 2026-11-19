@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
+  BookOpen,
   Check,
   CheckCircle2,
   ChevronLeft,
@@ -10,6 +11,7 @@ import {
   Download,
   Eye,
   EyeOff,
+  Feather,
   FileText,
   Flag,
   GitBranch,
@@ -31,6 +33,7 @@ import {
   CommentTargetType,
   CrossIndexEntry,
   ModelConfig,
+  StoryChapter,
   StoryChoice,
   StoryComment,
   StoryDisplayMode,
@@ -47,6 +50,7 @@ import {
   extractHighlightTerms,
   matchStoryTurns,
 } from '../utils/turnSearch';
+import { AuthorNoteBlock } from './AuthorNoteBlock';
 import { CommentAddPayload, CommentsSection } from './CommentsSection';
 import { DictaquillButton } from './DictaquillButton';
 import { IllustrationFigure } from './IllustrationFigure';
@@ -127,6 +131,11 @@ interface StoryWorkspaceProps {
   onCollaborateStory: () => void;
   onShareScene: (turn: StoryTurn) => void;
   onEditTagsAndVisibility?: () => void;
+  onUpdateStoryNotes?: (notes: {
+    prefixNote?: string;
+    suffixNote?: string;
+  }) => void;
+  onUpdateChapters?: (chapters: StoryChapter[]) => void;
   displayMode: StoryDisplayMode;
   onChangeDisplayMode: (mode: StoryDisplayMode) => void;
   publicStoryId: string;
@@ -175,6 +184,8 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
   onCollaborateStory,
   onShareScene,
   onEditTagsAndVisibility,
+  onUpdateStoryNotes,
+  onUpdateChapters,
   displayMode,
   onChangeDisplayMode,
   publicStoryId,
@@ -197,6 +208,12 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
   const [isPersisting, setIsPersisting] = useState(false);
   const [flaggingTurn, setFlaggingTurn] = useState<StoryTurn | null>(null);
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
+  const [isEditingStoryNotes, setIsEditingStoryNotes] = useState(false);
+  const [storyPrefixDraft, setStoryPrefixDraft] = useState(project.prefixNote ?? '');
+  const [storySuffixDraft, setStorySuffixDraft] = useState(project.suffixNote ?? '');
+  const [editingChapterNotesId, setEditingChapterNotesId] = useState<string | null>(null);
+  const [chapterPrefixDraft, setChapterPrefixDraft] = useState('');
+  const [chapterSuffixDraft, setChapterSuffixDraft] = useState('');
   const [loreTarget, setLoreTarget] = useState<LoreTarget | null>(null);
   const [illustrationTarget, setIllustrationTarget] =
     useState<IllustrationTarget | null>(null);
@@ -226,6 +243,10 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
 
   useEffect(() => {
     setEditingTurnId(null);
+    setIsEditingStoryNotes(false);
+    setStoryPrefixDraft(project.prefixNote ?? '');
+    setStorySuffixDraft(project.suffixNote ?? '');
+    setEditingChapterNotesId(null);
     setIllustrationTarget(null);
     setSelectedSceneId(null);
     setSelectedChapterIdx(0);
@@ -246,11 +267,26 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
   const latestTurn = project.turns[project.turns.length - 1];
 
   const turnChapterMap = useMemo(() => {
-    const map = new Map<string, { chapterNumber: number; title: string }>();
+    const map = new Map<
+      string,
+      { chapterNumber: number; title: string; chapterId: string }
+    >();
     for (const ch of project.chapters ?? []) {
       for (const tid of ch.turnIds) {
-        map.set(tid, { chapterNumber: ch.chapterNumber, title: ch.title });
+        map.set(tid, {
+          chapterNumber: ch.chapterNumber,
+          title: ch.title,
+          chapterId: ch.id,
+        });
       }
+    }
+    return map;
+  }, [project.chapters]);
+
+  const chapterByIdMap = useMemo(() => {
+    const map = new Map<string, StoryChapter>();
+    for (const ch of project.chapters ?? []) {
+      map.set(ch.id, ch);
     }
     return map;
   }, [project.chapters]);
@@ -263,6 +299,8 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
           id: project.id,
           title: 'Story Manuscript',
           summary: '',
+          prefixNote: undefined as string | undefined,
+          suffixNote: undefined as string | undefined,
           turns: project.turns,
           isSynthetic: true,
         },
@@ -280,6 +318,8 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
           id: ch.id,
           title: `Chapter ${String(ch.chapterNumber).padStart(2, '0')} — ${ch.title}`,
           summary: ch.summary,
+          prefixNote: ch.prefixNote,
+          suffixNote: ch.suffixNote,
           turns: chTurns,
           isSynthetic: false,
         };
@@ -292,6 +332,8 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
         id: `${project.id}-unassigned`,
         title: 'Recent Unassigned Scenes',
         summary: '',
+        prefixNote: undefined as string | undefined,
+        suffixNote: undefined as string | undefined,
         turns: unassigned,
         isSynthetic: true,
       });
@@ -544,6 +586,29 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
               <span>AO3 Tags</span>
             </button>
           )}
+          {onUpdateStoryNotes && (
+            <button
+              type="button"
+              data-testid="story-author-notes-btn"
+              onClick={() => {
+                if (isEditingStoryNotes) {
+                  setIsEditingStoryNotes(false);
+                } else {
+                  setStoryPrefixDraft(project.prefixNote ?? '');
+                  setStorySuffixDraft(project.suffixNote ?? '');
+                  setIsEditingStoryNotes(true);
+                }
+              }}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                project.prefixNote || project.suffixNote || isEditingStoryNotes
+                  ? 'text-[#1D4ED8] bg-[#EFF6FF] border-[#BFDBFE] hover:bg-[#DBEAFE]'
+                  : 'text-[#111827] bg-white border-neutral-300 hover:bg-neutral-50'
+              }`}
+            >
+              <Feather className="w-3.5 h-3.5 text-[#1D4ED8]" />
+              <span>Author Notes</span>
+            </button>
+          )}
           <div className="inline-flex items-center border border-neutral-300 rounded-lg bg-white overflow-hidden">
             <button
               type="button"
@@ -640,6 +705,88 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
             Dismiss
           </button>
         </div>
+      )}
+
+      {isEditingStoryNotes && onUpdateStoryNotes && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onUpdateStoryNotes({
+              prefixNote: storyPrefixDraft.trim()
+                ? storyPrefixDraft.trim().slice(0, 4000)
+                : undefined,
+              suffixNote: storySuffixDraft.trim()
+                ? storySuffixDraft.trim().slice(0, 4000)
+                : undefined,
+            });
+            setIsEditingStoryNotes(false);
+            setSaveToast('Saved story author notes');
+            setTimeout(() => setSaveToast(null), 2600);
+          }}
+          className="mb-8 bg-white border border-neutral-200 rounded-xl p-5 sm:p-6 space-y-4"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-neutral-100">
+            <div>
+              <h2 className="font-editorial text-lg font-semibold text-[#111827]">
+                Story Author Notes
+              </h2>
+              <p className="text-xs text-[#6B7280]">
+                Optional beginning (prefix) and ending (suffix) notes displayed around the full story.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label
+                htmlFor="story-prefix-note-input"
+                className="block text-xs font-medium text-[#111827] mb-1"
+              >
+                Beginning Author&apos;s Note (Prefix)
+              </label>
+              <textarea
+                id="story-prefix-note-input"
+                rows={3}
+                maxLength={4000}
+                value={storyPrefixDraft}
+                onChange={(e) => setStoryPrefixDraft(e.target.value)}
+                placeholder="Note shown before the story begins..."
+                className="w-full px-3 py-2 text-sm border border-neutral-300 rounded-lg bg-white resize-y focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="story-suffix-note-input"
+                className="block text-xs font-medium text-[#111827] mb-1"
+              >
+                Ending Author&apos;s Note (Suffix)
+              </label>
+              <textarea
+                id="story-suffix-note-input"
+                rows={3}
+                maxLength={4000}
+                value={storySuffixDraft}
+                onChange={(e) => setStorySuffixDraft(e.target.value)}
+                placeholder="Note shown after the story ends..."
+                className="w-full px-3 py-2 text-sm border border-neutral-300 rounded-lg bg-white resize-y focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+              />
+            </div>
+          </div>
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-100">
+            <button
+              type="button"
+              onClick={() => setIsEditingStoryNotes(false)}
+              className="px-3.5 py-1.5 text-xs font-medium text-[#4B5563] hover:text-[#111827] bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-1.5 text-xs font-medium text-white bg-[#1D4ED8] hover:bg-[#1E40AF] rounded-lg cursor-pointer"
+            >
+              Save Story Notes
+            </button>
+          </div>
+        </form>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-8 items-start">
@@ -755,9 +902,153 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
                     {activeChapterGroup?.title}
                   </span>
                 )}
+                {activeChapterGroup && !activeChapterGroup.isSynthetic && onUpdateChapters && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (editingChapterNotesId === activeChapterGroup.id) {
+                        setEditingChapterNotesId(null);
+                      } else {
+                        setChapterPrefixDraft(activeChapterGroup.prefixNote ?? '');
+                        setChapterSuffixDraft(activeChapterGroup.suffixNote ?? '');
+                        setEditingChapterNotesId(activeChapterGroup.id);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-[#1D4ED8] bg-[#EFF6FF] border border-[#BFDBFE] hover:bg-[#DBEAFE] rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <Feather className="w-3 h-3" />
+                    Chapter Notes
+                  </button>
+                )}
               </div>
             )}
           </div>
+
+          {displayMode === 'chapters' &&
+            activeChapterGroup &&
+            !activeChapterGroup.isSynthetic &&
+            editingChapterNotesId === activeChapterGroup.id &&
+            onUpdateChapters && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const nextChapters = (project.chapters ?? []).map((ch) =>
+                    ch.id === activeChapterGroup.id
+                      ? {
+                          ...ch,
+                          prefixNote: chapterPrefixDraft.trim()
+                            ? chapterPrefixDraft.trim().slice(0, 4000)
+                            : undefined,
+                          suffixNote: chapterSuffixDraft.trim()
+                            ? chapterSuffixDraft.trim().slice(0, 4000)
+                            : undefined,
+                        }
+                      : ch,
+                  );
+                  onUpdateChapters(nextChapters);
+                  setEditingChapterNotesId(null);
+                  setSaveToast(`Saved notes for ${activeChapterGroup.title}`);
+                  setTimeout(() => setSaveToast(null), 2600);
+                }}
+                className="bg-white border border-neutral-200 rounded-xl p-5 space-y-4"
+              >
+                <p className="text-xs font-semibold text-[#111827]">
+                  Author Notes for {activeChapterGroup.title}
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor={`ws-chap-prefix-${activeChapterGroup.id}`}
+                      className="block text-xs font-medium text-[#111827] mb-1"
+                    >
+                      Chapter Beginning Note (Prefix)
+                    </label>
+                    <textarea
+                      id={`ws-chap-prefix-${activeChapterGroup.id}`}
+                      rows={2}
+                      maxLength={4000}
+                      value={chapterPrefixDraft}
+                      onChange={(e) => setChapterPrefixDraft(e.target.value)}
+                      placeholder="Optional note displayed before this chapter..."
+                      className="w-full px-3 py-2 text-sm border border-neutral-300 rounded-lg bg-white resize-y focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor={`ws-chap-suffix-${activeChapterGroup.id}`}
+                      className="block text-xs font-medium text-[#111827] mb-1"
+                    >
+                      Chapter Ending Note (Suffix)
+                    </label>
+                    <textarea
+                      id={`ws-chap-suffix-${activeChapterGroup.id}`}
+                      rows={2}
+                      maxLength={4000}
+                      value={chapterSuffixDraft}
+                      onChange={(e) => setChapterSuffixDraft(e.target.value)}
+                      placeholder="Optional note displayed after this chapter..."
+                      className="w-full px-3 py-2 text-sm border border-neutral-300 rounded-lg bg-white resize-y focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingChapterNotesId(null)}
+                    className="px-3 py-1.5 text-xs font-medium text-[#4B5563] border border-neutral-300 rounded-lg cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-3.5 py-1.5 text-xs font-medium text-white bg-[#1D4ED8] hover:bg-[#1E40AF] rounded-lg cursor-pointer"
+                  >
+                    Save Chapter Notes
+                  </button>
+                </div>
+              </form>
+            )}
+
+          {project.prefixNote &&
+            (displayMode === 'story' ||
+              (displayMode === 'chapters' && clampedChapterIdx === 0) ||
+              (displayMode === 'scene' && activeSceneIndex === 0)) && (
+              <AuthorNoteBlock
+                variant="prefix"
+                scope="story"
+                note={project.prefixNote}
+                onEdit={
+                  onUpdateStoryNotes
+                    ? () => {
+                        setStoryPrefixDraft(project.prefixNote ?? '');
+                        setStorySuffixDraft(project.suffixNote ?? '');
+                        setIsEditingStoryNotes(true);
+                      }
+                    : undefined
+                }
+              />
+            )}
+
+          {displayMode === 'chapters' &&
+            activeChapterGroup &&
+            !activeChapterGroup.isSynthetic &&
+            activeChapterGroup.prefixNote && (
+              <AuthorNoteBlock
+                variant="prefix"
+                scope="chapter"
+                note={activeChapterGroup.prefixNote}
+                compact
+                onEdit={
+                  onUpdateChapters
+                    ? () => {
+                        setChapterPrefixDraft(activeChapterGroup.prefixNote ?? '');
+                        setChapterSuffixDraft(activeChapterGroup.suffixNote ?? '');
+                        setEditingChapterNotesId(activeChapterGroup.id);
+                      }
+                    : undefined
+                }
+              />
+            )}
 
           {/* Narrative Turns Stream */}
           <div className="space-y-8">
@@ -783,10 +1074,34 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
               </div>
             )}
 
-            {displayedTurns.map((turn) => {
+            {displayedTurns.map((turn, turnIdx) => {
               const isLatest = turn.id === latestTurn?.id;
               const isHighlighted = highlightedTurnId === turn.id;
               const chapterInfo = turnChapterMap.get(turn.id);
+              const chapterObj = chapterInfo
+                ? chapterByIdMap.get(chapterInfo.chapterId)
+                : undefined;
+              const prevTurn = turnIdx > 0 ? displayedTurns[turnIdx - 1] : undefined;
+              const nextTurn =
+                turnIdx < displayedTurns.length - 1
+                  ? displayedTurns[turnIdx + 1]
+                  : undefined;
+              const prevChapterId = prevTurn
+                ? turnChapterMap.get(prevTurn.id)?.chapterId
+                : undefined;
+              const nextChapterId = nextTurn
+                ? turnChapterMap.get(nextTurn.id)?.chapterId
+                : undefined;
+              const isChapterStartInStory =
+                displayMode === 'story' &&
+                !hasActiveFilter &&
+                Boolean(chapterObj) &&
+                chapterObj!.id !== prevChapterId;
+              const isChapterEndInStory =
+                displayMode === 'story' &&
+                !hasActiveFilter &&
+                Boolean(chapterObj) &&
+                chapterObj!.id !== nextChapterId;
               const ttsKey = `scene:${turn.id}`;
               const isTtsLoading = speech.loadingKey === ttsKey;
               const isTtsActive = speech.activeKey === ttsKey;
@@ -801,8 +1116,16 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
               const isTtsPrecomputing = speech.isItemPrecomputing(ttsItem);
               const isEditingThis = editingTurnId === turn.id;
               return (
-                <article
-                  key={turn.id}
+                <React.Fragment key={turn.id}>
+                  {isChapterStartInStory && chapterObj?.prefixNote && (
+                    <AuthorNoteBlock
+                      variant="prefix"
+                      scope="chapter"
+                      note={chapterObj.prefixNote}
+                      compact
+                    />
+                  )}
+                  <article
                   id={`story-turn-${turn.turnNumber}`}
                   data-turn-number={turn.turnNumber}
                   ref={(el) => {
@@ -1060,12 +1383,42 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
                         </div>
                       )}
 
+                      {/* Scene Beginning Author's Note (Prefix) */}
+                      {turn.prefixNote && (
+                        <div className="mt-5">
+                          <AuthorNoteBlock
+                            variant="prefix"
+                            scope="scene"
+                            note={turn.prefixNote}
+                            compact
+                            onEdit={() => setEditingTurnId(turn.id)}
+                          >
+                            {renderHighlightedText(turn.prefixNote, highlightTerms)}
+                          </AuthorNoteBlock>
+                        </div>
+                      )}
+
                       {/* Literary Prose */}
                       <div className="mt-5 space-y-4 max-w-[68ch] text-[15.5px] leading-[1.75] text-[#111827]">
                         {turn.prose.map((paragraph, pIdx) => (
                           <p key={pIdx}>{renderHighlightedText(paragraph, highlightTerms)}</p>
                         ))}
                       </div>
+
+                      {/* Scene Ending Author's Note (Suffix) */}
+                      {turn.suffixNote && (
+                        <div className="mt-5">
+                          <AuthorNoteBlock
+                            variant="suffix"
+                            scope="scene"
+                            note={turn.suffixNote}
+                            compact
+                            onEdit={() => setEditingTurnId(turn.id)}
+                          >
+                            {renderHighlightedText(turn.suffixNote, highlightTerms)}
+                          </AuthorNoteBlock>
+                        </div>
+                      )}
 
                       {/* Scene Continuity Verification Footer */}
                       <div className="mt-6 pt-4 border-t border-neutral-100 space-y-1.5">
@@ -1092,6 +1445,15 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
                     </>
                   )}
                 </article>
+                {isChapterEndInStory && chapterObj?.suffixNote && (
+                  <AuthorNoteBlock
+                    variant="suffix"
+                    scope="chapter"
+                    note={chapterObj.suffixNote}
+                    compact
+                  />
+                )}
+              </React.Fragment>
               );
             })}
 
@@ -1129,6 +1491,49 @@ export const StoryWorkspace: React.FC<StoryWorkspaceProps> = ({
               </div>
             )}
           </div>
+
+          {displayMode === 'chapters' &&
+            activeChapterGroup &&
+            !activeChapterGroup.isSynthetic &&
+            activeChapterGroup.suffixNote && (
+              <AuthorNoteBlock
+                variant="suffix"
+                scope="chapter"
+                note={activeChapterGroup.suffixNote}
+                compact
+                onEdit={
+                  onUpdateChapters
+                    ? () => {
+                        setChapterPrefixDraft(activeChapterGroup.prefixNote ?? '');
+                        setChapterSuffixDraft(activeChapterGroup.suffixNote ?? '');
+                        setEditingChapterNotesId(activeChapterGroup.id);
+                      }
+                    : undefined
+                }
+              />
+            )}
+
+          {project.suffixNote &&
+            (displayMode === 'story' ||
+              (displayMode === 'chapters' &&
+                clampedChapterIdx === chapterGroups.length - 1) ||
+              (displayMode === 'scene' &&
+                activeSceneIndex === project.turns.length - 1)) && (
+              <AuthorNoteBlock
+                variant="suffix"
+                scope="story"
+                note={project.suffixNote}
+                onEdit={
+                  onUpdateStoryNotes
+                    ? () => {
+                        setStoryPrefixDraft(project.prefixNote ?? '');
+                        setStorySuffixDraft(project.suffixNote ?? '');
+                        setIsEditingStoryNotes(true);
+                      }
+                    : undefined
+                }
+              />
+            )}
 
           {/* Interactive Choice & Custom Action Deck */}
           {latestTurn && (

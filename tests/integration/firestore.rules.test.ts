@@ -28,6 +28,8 @@ describe('Firestore security rules & blueprint contract', () => {
     expect(paths).toContain('/publicStories/{publicId}');
     expect(paths).toContain('/publicStories/{publicId}/kudos/{kudoId}');
     expect(paths).toContain('/publicStories/{publicId}/comments/{commentId}');
+    expect(paths).toContain('/users/{userId}/collections/{collectionId}');
+    expect(paths).toContain('/users/{userId}/subscriptions/{storyId}');
 
     expect(rulesText).toContain('match /users/{userId}');
     expect(rulesText).toContain('match /stories/{storyId}');
@@ -37,27 +39,40 @@ describe('Firestore security rules & blueprint contract', () => {
     expect(rulesText).toContain('match /publicStories/{publicId}');
     expect(rulesText).toContain('match /kudos/{kudoId}');
     expect(rulesText).toContain('match /comments/{commentId}');
+    expect(rulesText).toContain('match /collections/{collectionId}');
+    expect(rulesText).toContain('match /subscriptions/{storyId}');
   });
 
   it('avoids expensive get()/exists() calls inside allow list rules', () => {
     const listLines = rulesText
       .split('\n')
       .filter((line) => line.includes('allow list:'));
-    expect(listLines.length).toBeGreaterThanOrEqual(7);
+    expect(listLines.length).toBeGreaterThanOrEqual(9);
     for (const line of listLines) {
       expect(line).not.toMatch(/\b(get|exists)\(/);
     }
   });
 
-  it('restricts sharedWorks reads, collaboration membership, private story exclusion, and atomic kudos/comments', () => {
+  it('restricts sharedWorks reads, collaboration membership, private story exclusion, anonymous kudos, and atomic kudos/comments', () => {
     expect(rulesText).toMatch(/match \/sharedWorks\/\{shareId\}[\s\S]*allow get: if isValidId\(shareId\);/);
     expect(rulesText).toMatch(
       /collaborations\/\$\(collabId\)\/members\/\$\(request\.auth\.uid\)/,
     );
     expect(rulesText).toContain('existing().isPrivate == false');
     expect(rulesText).toContain('isValidAo3Tags');
+    expect(rulesText).toContain('isAnonKudoToken');
     expect(rulesText).toContain('existsAfter(/databases/$(database)/documents/publicStories/$(publicId)/kudos/$(request.auth.uid))');
     expect(rulesText).toContain('getAfter(/databases/$(database)/documents/publicStories/$(publicId)).data.kudosCount');
     expect(rulesText).toContain('getAfter(/databases/$(database)/documents/publicStories/$(publicId)).data.commentCount');
+  });
+
+  it('permits bounded prefixNote and suffixNote across stories, public stories, shared works, and collaborations', () => {
+    expect(rulesText.match(/data\.prefixNote\.size\(\) <= 4000/g)).toHaveLength(4);
+    expect(rulesText.match(/data\.suffixNote\.size\(\) <= 4000/g)).toHaveLength(4);
+    expect(rulesText.match(/'prefixNote',\s*'suffixNote'/g)?.length).toBeGreaterThanOrEqual(8);
+
+    const serializedBlueprint = JSON.stringify(blueprint);
+    expect(serializedBlueprint).toContain('"prefixNote"');
+    expect(serializedBlueprint).toContain('"suffixNote"');
   });
 });

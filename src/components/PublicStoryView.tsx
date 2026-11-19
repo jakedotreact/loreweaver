@@ -20,6 +20,7 @@ import {
   UserCollection,
 } from '../types/story';
 import { buildPublicStoryUrl } from '../utils/storyLinks';
+import { AuthorNoteBlock } from './AuthorNoteBlock';
 import { CommentAddPayload, CommentsSection } from './CommentsSection';
 import { StoryFloatingBar } from './StoryFloatingBar';
 
@@ -96,6 +97,8 @@ export const PublicStoryView: React.FC<PublicStoryViewProps> = ({
           id: story.id,
           title: 'Story Manuscript',
           summary: '',
+          prefixNote: undefined as string | undefined,
+          suffixNote: undefined as string | undefined,
           turns: story.turns,
           isSynthetic: true,
         },
@@ -113,6 +116,8 @@ export const PublicStoryView: React.FC<PublicStoryViewProps> = ({
           id: ch.id,
           title: `Chapter ${String(ch.chapterNumber).padStart(2, '0')} — ${ch.title}`,
           summary: ch.summary,
+          prefixNote: ch.prefixNote,
+          suffixNote: ch.suffixNote,
           turns: chTurns,
           isSynthetic: false,
         };
@@ -125,6 +130,8 @@ export const PublicStoryView: React.FC<PublicStoryViewProps> = ({
         id: `${story.id}-unassigned`,
         title: 'Recent Unassigned Scenes',
         summary: '',
+        prefixNote: undefined as string | undefined,
+        suffixNote: undefined as string | undefined,
         turns: unassigned,
         isSynthetic: true,
       });
@@ -199,6 +206,8 @@ export const PublicStoryView: React.FC<PublicStoryViewProps> = ({
       setting: story.setting,
       tone: story.tone,
       premise: story.premise,
+      prefixNote: story.prefixNote,
+      suffixNote: story.suffixNote,
       coverImage: story.coverImage,
       protagonistId: story.characters[0]?.id ?? '',
       turns: JSON.parse(JSON.stringify(story.turns)),
@@ -223,15 +232,31 @@ export const PublicStoryView: React.FC<PublicStoryViewProps> = ({
         </p>
       </div>
       {turn.userAction && (
-        <p className="text-xs italic text-[#4B5563] pl-3 border-l-2 border-neutral-300">
+        <p className="text-xs italic text-[#4B5563] px-3.5 py-2 bg-[#F8FAFC] border border-neutral-200 rounded-lg">
           Author Direction: {turn.userAction}
         </p>
+      )}
+      {turn.prefixNote && (
+        <AuthorNoteBlock
+          variant="prefix"
+          scope="scene"
+          note={turn.prefixNote}
+          compact
+        />
       )}
       <div className="space-y-4 text-base text-[#1F2937] leading-[1.78] font-editorial">
         {turn.prose.map((para, pIdx) => (
           <p key={pIdx}>{para}</p>
         ))}
       </div>
+      {turn.suffixNote && (
+        <AuthorNoteBlock
+          variant="suffix"
+          scope="scene"
+          note={turn.suffixNote}
+          compact
+        />
+      )}
     </div>
   );
 
@@ -438,6 +463,17 @@ export const PublicStoryView: React.FC<PublicStoryViewProps> = ({
 
       {/* Readable Prose Container (Respects Current Scene / Chapters / Full Story) */}
       <article className="bg-white border border-neutral-200 rounded-xl p-6 sm:p-10 space-y-10">
+        {story.prefixNote &&
+          (displayMode === 'story' ||
+            (displayMode === 'chapters' && clampedChapterIdx === 0) ||
+            (displayMode === 'scene' && clampedTurnIndex === 0)) && (
+            <AuthorNoteBlock
+              variant="prefix"
+              scope="story"
+              note={story.prefixNote}
+            />
+          )}
+
         {displayMode === 'scene' && activeTurn && (
           <section className="space-y-8">{renderTurn(activeTurn)}</section>
         )}
@@ -454,9 +490,25 @@ export const PublicStoryView: React.FC<PublicStoryViewProps> = ({
                 </p>
               )}
             </header>
+            {activeChapterGroup.prefixNote && (
+              <AuthorNoteBlock
+                variant="prefix"
+                scope="chapter"
+                note={activeChapterGroup.prefixNote}
+                compact
+              />
+            )}
             <div className="space-y-9">
               {activeChapterGroup.turns.map(renderTurn)}
             </div>
+            {activeChapterGroup.suffixNote && (
+              <AuthorNoteBlock
+                variant="suffix"
+                scope="chapter"
+                note={activeChapterGroup.suffixNote}
+                compact
+              />
+            )}
           </section>
         )}
 
@@ -471,9 +523,38 @@ export const PublicStoryView: React.FC<PublicStoryViewProps> = ({
                   <p className="text-sm text-[#4B5563] mt-1">{group.summary}</p>
                 )}
               </header>
+              {group.prefixNote && (
+                <AuthorNoteBlock
+                  variant="prefix"
+                  scope="chapter"
+                  note={group.prefixNote}
+                  compact
+                />
+              )}
               <div className="space-y-9">{group.turns.map(renderTurn)}</div>
+              {group.suffixNote && (
+                <AuthorNoteBlock
+                  variant="suffix"
+                  scope="chapter"
+                  note={group.suffixNote}
+                  compact
+                />
+              )}
             </section>
           ))}
+
+        {story.suffixNote &&
+          (displayMode === 'story' ||
+            (displayMode === 'chapters' &&
+              clampedChapterIdx === chapterGroups.length - 1) ||
+            (displayMode === 'scene' &&
+              clampedTurnIndex === story.turns.length - 1)) && (
+            <AuthorNoteBlock
+              variant="suffix"
+              scope="story"
+              note={story.suffixNote}
+            />
+          )}
 
         {/* Kudos Bar (Supports Anonymous Kudos) */}
         <div className="pt-6 border-t border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">

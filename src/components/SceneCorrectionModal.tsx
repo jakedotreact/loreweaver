@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Flag, Loader2, RefreshCw, X } from 'lucide-react';
+import { useModalScrollLock } from '../hooks/useModalScrollLock';
 import { CrossIndexCategory, CrossIndexEntry, StoryTurn } from '../types/story';
 import { DictaquillButton } from './DictaquillButton';
 
@@ -71,6 +72,8 @@ export const SceneCorrectionModal: React.FC<SceneCorrectionModalProps> = ({
       setLoreDetail('');
     }
   }, [turn]);
+
+  useModalScrollLock(Boolean(turn));
 
   if (!turn) return null;
 
@@ -182,12 +185,12 @@ export const SceneCorrectionModal: React.FC<SceneCorrectionModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-hidden overscroll-contain"
       role="dialog"
       aria-modal="true"
       aria-labelledby="scene-correction-heading"
     >
-      <div className="w-full max-w-2xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden my-auto max-h-[90vh] flex flex-col">
+      <div className="w-full max-w-2xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between gap-4 shrink-0">
           <div className="flex items-center gap-2.5">
@@ -216,7 +219,7 @@ export const SceneCorrectionModal: React.FC<SceneCorrectionModalProps> = ({
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleRewriteSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
+        <form onSubmit={handleRewriteSubmit} className="p-6 space-y-4 overflow-y-auto overscroll-contain flex-1 min-h-0">
           {displayError && (
             <div className="px-4 py-3 bg-[#FEF2F2] border border-[#FECACA] rounded-lg flex items-start gap-2.5 text-sm text-[#B91C1C]">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />

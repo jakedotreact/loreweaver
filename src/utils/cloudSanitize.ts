@@ -46,9 +46,27 @@ export function stripIllustrationDataUrl(
   });
 }
 
+export function sanitizeAuthorNote(note?: string | null): string | undefined {
+  if (typeof note !== 'string') return undefined;
+  const trimmed = note.trim().slice(0, 4000);
+  return trimmed ? trimmed : undefined;
+}
+
 export function stripTurnsForCloud(turns: StoryTurn[]): StoryTurn[] {
   return turns.slice(-200).map((t) => {
     const cleaned = { ...t };
+    const prefixNote = sanitizeAuthorNote(t.prefixNote);
+    const suffixNote = sanitizeAuthorNote(t.suffixNote);
+    if (prefixNote === undefined) {
+      delete cleaned.prefixNote;
+    } else {
+      cleaned.prefixNote = prefixNote;
+    }
+    if (suffixNote === undefined) {
+      delete cleaned.suffixNote;
+    } else {
+      cleaned.suffixNote = suffixNote;
+    }
     const safeIll = stripIllustrationDataUrl(t.illustration);
     if (safeIll === undefined) {
       delete cleaned.illustration;
@@ -62,6 +80,18 @@ export function stripTurnsForCloud(turns: StoryTurn[]): StoryTurn[] {
 export function stripChaptersForCloud(chapters: StoryChapter[] = []): StoryChapter[] {
   return chapters.slice(0, 100).map((ch) => {
     const cleaned = { ...ch };
+    const prefixNote = sanitizeAuthorNote(ch.prefixNote);
+    const suffixNote = sanitizeAuthorNote(ch.suffixNote);
+    if (prefixNote === undefined) {
+      delete cleaned.prefixNote;
+    } else {
+      cleaned.prefixNote = prefixNote;
+    }
+    if (suffixNote === undefined) {
+      delete cleaned.suffixNote;
+    } else {
+      cleaned.suffixNote = suffixNote;
+    }
     const safeIll = stripIllustrationDataUrl(ch.illustration);
     if (safeIll === undefined) {
       delete cleaned.illustration;
@@ -78,6 +108,8 @@ export function stripSavePointsForCloud(savePoints: SavePoint[] = []): SavePoint
       ...sp,
       snapshot: {
         ...sp.snapshot,
+        prefixNote: sanitizeAuthorNote(sp.snapshot.prefixNote),
+        suffixNote: sanitizeAuthorNote(sp.snapshot.suffixNote),
         turns: stripTurnsForCloud(sp.snapshot.turns),
         chapters: stripChaptersForCloud(sp.snapshot.chapters ?? []),
       },

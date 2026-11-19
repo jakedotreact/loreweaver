@@ -76,6 +76,8 @@ export interface StoryTurn {
   activeCharacters: string[];
   continuityNotes: string[];
   continuityWarning: string | null;
+  prefixNote?: string;
+  suffixNote?: string;
   illustration?: StoryIllustration | null;
   timestamp: number;
 }
@@ -85,6 +87,8 @@ export interface StoryChapter {
   chapterNumber: number;
   title: string;
   summary: string;
+  prefixNote?: string;
+  suffixNote?: string;
   turnIds: string[];
   illustration?: StoryIllustration | null;
   mergedAt: number;
@@ -96,6 +100,8 @@ export interface StorySnapshot {
   setting: string;
   tone: string;
   premise: string;
+  prefixNote?: string;
+  suffixNote?: string;
   protagonistId: string;
   turns: StoryTurn[];
   characters: CharacterProfile[];
@@ -165,6 +171,8 @@ export interface PublicStoryWork {
   setting: string;
   tone: string;
   premise: string;
+  prefixNote?: string;
+  suffixNote?: string;
   coverImage?: string;
   isPrivate: boolean;
   tags: StoryTags;
@@ -277,6 +285,8 @@ export interface SharedWork {
   tone: string;
   premise: string;
   summary: string;
+  prefixNote?: string;
+  suffixNote?: string;
   turns: StoryTurn[];
   chapters: StoryChapter[];
   characters: CharacterProfile[];

@@ -229,6 +229,8 @@ export function storyProjectToPublicWork(
     setting: story.setting,
     tone: story.tone,
     premise: story.premise,
+    prefixNote: story.prefixNote,
+    suffixNote: story.suffixNote,
     coverImage: story.coverImage,
     isPrivate: story.isPrivate === true,
     tags,

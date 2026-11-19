@@ -10,6 +10,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { useModalScrollLock } from '../hooks/useModalScrollLock';
 import {
   ContinuityAuditReport,
   CrossIndexCategory,
@@ -66,6 +67,8 @@ export const CrossIndexView: React.FC<CrossIndexViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [editingEntry, setEditingEntry] = useState<CrossIndexEntry | null>(null);
   const [tagsText, setTagsText] = useState('');
+
+  useModalScrollLock(Boolean(editingEntry));
 
   const filteredEntries = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -358,13 +361,13 @@ export const CrossIndexView: React.FC<CrossIndexViewProps> = ({
       {/* Add/Edit Lore Entry Modal */}
       {editingEntry && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 overflow-hidden overscroll-contain"
           role="dialog"
           aria-modal="true"
           aria-labelledby="lore-modal-title"
         >
-          <div className="w-full max-w-lg bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between">
+          <div className="w-full max-w-lg bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between shrink-0">
               <h2
                 id="lore-modal-title"
                 className="font-editorial text-xl font-semibold text-[#111827]"
@@ -382,7 +385,7 @@ export const CrossIndexView: React.FC<CrossIndexViewProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleSaveEntry} className="p-6 space-y-4">
+            <form onSubmit={handleSaveEntry} className="p-6 space-y-4 overflow-y-auto overscroll-contain flex-1 min-h-0">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-[#111827] mb-1">

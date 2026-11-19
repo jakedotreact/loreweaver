@@ -8,40 +8,55 @@
 
 All screenshots below are automatically captured from the live application using Playwright (`npm run docs:update`).
 
-### 1. Story Workspace & Two-Link Masthead
-Interactive narrative stream featuring live scene search and character filtering (`#turn`, title, keyword, or cast member), per-scene pre-computed TTS narration, scene illustrations, manual flagging & retroactive AI rewrites, PDF/HTML/JSON exports, branching choices, Dictaquill voice dictation, and explicit **Share Link** and **Collaborate Link** controls for every story.
+### 1. Landing Page, Story Index, Collections & Subscriptions
+Editorial landing experience showcasing public works indexed with AO3-style metadata (`Rating`, `Archive Warnings`, `Category`, `Fandoms`, `Relationships`, `Characters`, and `Additional Tags`), instant multi-facet filtering, sorting, strict exclusion of any manuscript marked `isPrivate: true`, and dedicated **Collections** and **Subscriptions** shelves.
+
+![Landing Page Story Index](docs/screenshots/landing-index.png)
+
+### 2. Public Story Reader, View Modes, Comments & Anonymous Kudos
+Full work view (`/?story=<publicId>`) with the complete AO3 metadata grid, a 3-way **Current Scene | Chapters | Full Story** display toggle, hovering storywide menu overlay, one-per-user/anonymous **Give Kudos ♥** action with live counter, and hierarchical scene → chapter → story comments & replies.
+
+![Public Story Reader & Kudos](docs/screenshots/story-reader-kudos.png)
+
+### 3. Story Workspace, Hovering Menu Bar & Two-Link Masthead
+Interactive narrative stream featuring **Current Scene / Chapters / Full Story** view switching, live scene search and character filtering (`#turn`, title, keyword, or cast member), hovering translucent **StoryFloatingBar** overlay (quick Save, Share, Collaborate, Subscribe, Collect, Stories, and PDF/HTML/JSON exports), AO3 Tags & Visibility controls, per-scene pre-computed TTS narration, scene illustrations, manual flagging & retroactive AI rewrites, branching choices, Dictaquill voice dictation, and explicit **Share Link** and **Collaborate Link** controls for every story.
 
 ![Story Workspace](docs/screenshots/story-workspace.png)
 
-### 2. Two Links per Story: Public Share & Live Collaboration
-Every manuscript maintains two dedicated links synchronized across the masthead, footer, and **My Stories** library:
+### 4. AO3 Tag Taxonomy & Public/Private Visibility Modal
+Authors can toggle any story between **Public (Listed in Story Index)** and **Private (Excluded from Index)** and manage Rating, Archive Warnings, Categories, Fandoms, Relationships (`/` and `&`), Cast-synced Characters, and Additional Tags.
+
+![AO3 Tagging & Visibility](docs/screenshots/ao3-tagging.png)
+
+### 5. Two Links per Story: Public Share & Live Collaboration
+Every manuscript maintains two dedicated links synchronized across the masthead, hovering overlay bar, and **My Stories** library:
 - **Share Link (`/?share=<shareId>`)**: Publishes a read-only reader snapshot (`/sharedWorks/{shareId}`) for sharing full stories, single chapters, or individual scenes without exposing private user data.
 - **Collaborate Link (`/?collab=<collabId>`)**: Opens a live co-authoring room (`/collaborations/{collabId}` + `/ws/collab` WebSocket presence) so multiple signed-in writers can advance scenes, edit prose, organize chapters, and watch collaborator activity live.
 
 ![Share & Collaboration Controls](docs/screenshots/story-links-collab.png)
 
-### 3. Chapter Organization & Manuscript Assembly
+### 6. Chapter Organization & Manuscript Assembly
 Assemble unassigned story blurbs into numbered chapters, reorder scenes, toggle between merged reading flow and prompt-preserving studio mode, generate chapter illustrations or audio narration, export PDF/HTML chapters, and publish chapter-level Share Links.
 
 ![Chapter Organization](docs/screenshots/chapters.png)
 
-### 4. Character Profiles & Canon Deduction
+### 7. Character Profiles & Canon Deduction
 Structured dossiers tracking strengths, flaws, motivations, vocal mannerisms, injuries/status, locations, inventories, and relationships—plus instant canon profile deduction from a character name and universe.
 
 ![Character Profiles](docs/screenshots/characters.png)
 
-### 5. Universe Cross-Index & Continuity Audits
+### 8. Universe Cross-Index & Continuity Audits
 Categorized canon ledger (`World Rules`, `Locations`, `Items`, `Plot Threads`, `Timeline`, `Character Facts`) with pinned invariants, manual CRUD, filtering, and full-manuscript AI continuity audits.
 
 ![Universe Cross-Index](docs/screenshots/cross-index.png)
 
-### 6. Save Points, Exports & Archive Recovery
+### 9. Save Points, Exports & Archive Recovery
 Capture named snapshots of turns, cast, chapters, and Cross-Index state; restore any checkpoint; or download the full book as formatted PDF, styled HTML, or portable JSON archive.
 
 ![Save Points & Exports](docs/screenshots/save-points.png)
 
-### 7. Studio Settings & Persistent Preferences
-Centralized settings behind the gear icon for narrative Gemini model selection, reasoning thinking level, Text-to-Speech narrator voice, automatic playback on ready, and Google OAuth cloud sync.
+### 10. Studio Settings & Custom Account Handle
+Centralized Studio Settings behind the gear icon for narrative Gemini model selection, reasoning thinking level, Text-to-Speech narrator voice, and automatic playback on ready—paired with a compact icon-only Account button for freely chooseable author/reader usernames and Google OAuth cloud sync.
 
 ![Studio Settings](docs/screenshots/studio-settings.png)
 
@@ -49,6 +64,19 @@ Centralized settings behind the gear icon for narrative Gemini model selection, 
 
 ## Core Functionality
 
+- **Landing Page & Public Story Index with Private Story Exclusion**:
+  - Default entry view showcases indexed public stories while strictly excluding any manuscript with `isPrivate: true` at both the UI query/filter layer (`filterPublicStories`, `buildMergedPublicStoryIndex`) and Firestore security rules (`/publicStories/{publicId}`).
+- **3-Way Display Toggle & Hovering Overlay Menu (`StoryFloatingBar`)**:
+  - Switch seamlessly between **Current Scene**, **Chapters**, and **Full Story** in both the Reader and Studio Workspace, supported by a collapsible translucent floating action bar.
+- **Freely Chooseable Account Username & Icon-Only Account Button**:
+  - Customize a public pen name / reader handle whether browsing locally or synced to Firestore via Google OAuth, accessed via a clean icon-only button in `TopNav`.
+- **AO3-Style Tagging Taxonomy (`ao3Tags.ts`, `StoryTagsModal`)**:
+  - Full structured metadata supporting `Rating`, `Archive Warnings`, `Categories`, `Fandoms`, `Relationships` (`/` romantic and `&` platonic conventions), `Characters` (with one-click cast sync), and `Additional Tags`.
+- **Hierarchical Comments & Anonymous Kudos (`CommentsSection`, `commentsTree.ts`, `communityStore.ts`)**:
+  - Both signed-in readers (optional anonymity) and guests (persistent browser `anon_*` token) can award permanent deduplicated kudos (`/publicStories/{publicId}/kudos/{kudoId}`).
+  - Threaded comments and sub-comments anchor to `story`, `chapter`, or `scene`: scene comments roll up into chapters, and chapter + scene comments roll up into the full story view.
+- **Collections & Story Subscriptions (`LibraryShelfView`)**:
+  - Create public or private named collections, add or remove stories from index cards or the hovering bar, and subscribe to public stories to track newly added scenes/chapters—synced to `/users/{uid}/collections` and `/users/{uid}/subscriptions`.
 - **Dual Per-Story Links (Share vs. Collaborate)**:
   - **Read-Only Share Link (`/?share=<shareId>`)**: Share full manuscripts, individual chapters, or single scenes via `ShareModal` and `SharedWorkView`, backed by `/sharedWorks/{shareId}`. Readers can inspect prose and cast read-only or fork/import a local copy.
   - **Real-Time Collaboration Link (`/?collab=<collabId>`)**: Invite verified co-authors via `CollaborationModal` into a synchronized room backed by Firestore (`/collaborations/{collabId}` + `/collaborations/{collabId}/members/{uid}`) and a low-latency WebSocket presence hub (`/ws/collab`).
@@ -79,15 +107,18 @@ Centralized settings behind the gear icon for narrative Gemini model selection, 
 
 `npm run build` runs the full **Vitest** suite automatically before bundling (`npm test && vite build`).
 
-Latest verified run via `npm run docs:update`: **18/18 test files passed (26/26 tests passed)**.
+Latest verified run via `npm run docs:update`: **24/24 test files passed (39/39 tests passed)**.
 
 | Test File | Tests | Status |
 | --- | ---: | --- |
 | `tests/integration/collab.ws.test.ts` | 1 | Passed |
+| `tests/integration/community.ui.test.tsx` | 4 | Passed |
 | `tests/integration/firestore.rules.test.ts` | 4 | Passed |
 | `tests/integration/server.api.test.ts` | 4 | Passed |
 | `tests/integration/ui.components.test.tsx` | 2 | Passed |
+| `tests/unit/ao3Tags.test.ts` | 6 | Passed |
 | `tests/unit/cloudSanitize.test.ts` | 3 | Passed |
+| `tests/unit/commentsTree.test.ts` | 3 | Passed |
 | `tests/unit/htmlExport.test.ts` | 3 | Passed |
 | `tests/unit/securityHygiene.test.ts` | 2 | Passed |
 | `tests/unit/storyLinks.test.ts` | 3 | Passed |

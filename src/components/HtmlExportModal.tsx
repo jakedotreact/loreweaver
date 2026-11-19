@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Check, Copy, Download, FileText, Loader2, X } from 'lucide-react';
+import { useModalScrollLock } from '../hooks/useModalScrollLock';
 import { StoryProject } from '../types/story';
 import { downloadHtmlFile, generateStoryHtml, HtmlExportOptions } from '../utils/htmlExport';
 import { exportStoryToPdf } from '../utils/pdfExport';
@@ -59,6 +60,8 @@ export const HtmlExportModal: React.FC<HtmlExportModalProps> = ({
     selectedChapterId,
   ]);
 
+  useModalScrollLock(isOpen);
+
   if (!isOpen) return null;
 
   const slug = project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -106,12 +109,12 @@ export const HtmlExportModal: React.FC<HtmlExportModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 sm:p-6 overflow-hidden overscroll-contain"
       role="dialog"
       aria-modal="true"
       aria-labelledby="html-export-heading"
     >
-      <div className="w-full max-w-5xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden my-auto max-h-[90vh] flex flex-col">
+      <div className="w-full max-w-5xl bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between gap-4 shrink-0">
           <div>
@@ -136,9 +139,9 @@ export const HtmlExportModal: React.FC<HtmlExportModalProps> = ({
         </div>
 
         {/* Body */}
-        <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] flex-1 min-h-0 overflow-y-auto lg:overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] flex-1 min-h-0 overflow-y-auto overscroll-contain lg:overflow-hidden">
           {/* Options Sidebar */}
-          <div className="p-5 border-b lg:border-b-0 lg:border-r border-neutral-200 space-y-5 lg:overflow-y-auto bg-neutral-50/50">
+          <div className="p-5 border-b lg:border-b-0 lg:border-r border-neutral-200 space-y-5 lg:overflow-y-auto overscroll-contain bg-neutral-50/50">
             <div>
               <label
                 htmlFor="export-scope-select"
@@ -271,10 +274,10 @@ export const HtmlExportModal: React.FC<HtmlExportModalProps> = ({
                 title="HTML Export Preview"
                 srcDoc={htmlOutput}
                 sandbox="allow-same-origin"
-                className="w-full flex-1 min-h-[300px] border-0 bg-[#F8F9FA]"
+                className="w-full flex-1 min-h-[300px] lg:min-h-0 border-0 bg-[#F8F9FA]"
               />
             ) : (
-              <pre className="flex-1 min-h-[300px] p-5 text-xs font-mono text-[#1F2937] bg-neutral-50 overflow-auto whitespace-pre-wrap break-words">
+              <pre className="flex-1 min-h-[300px] lg:min-h-0 p-5 text-xs font-mono text-[#1F2937] bg-neutral-50 overflow-auto overscroll-contain whitespace-pre-wrap break-words">
                 {htmlOutput}
               </pre>
             )}

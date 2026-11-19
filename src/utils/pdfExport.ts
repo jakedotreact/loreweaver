@@ -241,6 +241,17 @@ export async function exportStoryToPdf(
     );
   }
 
+  if (!options.chapterId && !options.turnId && project.prefixNote?.trim()) {
+    drawCalloutBox(
+      "STORY BEGINNING AUTHOR'S NOTE",
+      project.prefixNote.trim(),
+      [248, 250, 252],
+      [229, 231, 235],
+      [29, 78, 216],
+      [55, 65, 81],
+    );
+  }
+
   const renderTurnToPdf = async (turn: StoryTurn, isMergedFlow: boolean) => {
     ensureSpace(44);
     if (isMergedFlow) {
@@ -288,12 +299,34 @@ export async function exportStoryToPdf(
       await drawIllustration(turn.illustration.dataUrl, caption);
     }
 
+    if (turn.prefixNote?.trim()) {
+      drawCalloutBox(
+        "SCENE BEGINNING AUTHOR'S NOTE",
+        turn.prefixNote.trim(),
+        [248, 250, 252],
+        [229, 231, 235],
+        [29, 78, 216],
+        [55, 65, 81],
+      );
+    }
+
     doc.setFont('times', 'normal');
     doc.setFontSize(11.5);
     for (const paragraph of turn.prose) {
       const pLines = doc.splitTextToSize(paragraph, contentWidth) as string[];
       drawWrappedLines(pLines, marginX, 17, [17, 24, 39]);
       y += 8;
+    }
+
+    if (turn.suffixNote?.trim()) {
+      drawCalloutBox(
+        "SCENE ENDING AUTHOR'S NOTE",
+        turn.suffixNote.trim(),
+        [248, 250, 252],
+        [229, 231, 235],
+        [29, 78, 216],
+        [55, 65, 81],
+      );
     }
 
     if (options.includeChoices && turn.choices.length > 0) {
@@ -376,12 +409,34 @@ export async function exportStoryToPdf(
     }
     y += 10;
 
+    if (ch.prefixNote?.trim()) {
+      drawCalloutBox(
+        "CHAPTER BEGINNING AUTHOR'S NOTE",
+        ch.prefixNote.trim(),
+        [248, 250, 252],
+        [229, 231, 235],
+        [29, 78, 216],
+        [55, 65, 81],
+      );
+    }
+
     if (ch.illustration?.dataUrl) {
       await drawIllustration(ch.illustration.dataUrl, ch.illustration.caption || ch.title);
     }
 
     for (const turn of chTurns) {
       await renderTurnToPdf(turn, true);
+    }
+
+    if (ch.suffixNote?.trim()) {
+      drawCalloutBox(
+        "CHAPTER ENDING AUTHOR'S NOTE",
+        ch.suffixNote.trim(),
+        [248, 250, 252],
+        [229, 231, 235],
+        [29, 78, 216],
+        [55, 65, 81],
+      );
     }
 
     y += 14;
@@ -404,6 +459,17 @@ export async function exportStoryToPdf(
     for (const turn of unassignedTurns) {
       await renderTurnToPdf(turn, false);
     }
+  }
+
+  if (!options.chapterId && !options.turnId && project.suffixNote?.trim()) {
+    drawCalloutBox(
+      "STORY ENDING AUTHOR'S NOTE",
+      project.suffixNote.trim(),
+      [248, 250, 252],
+      [229, 231, 235],
+      [29, 78, 216],
+      [55, 65, 81],
+    );
   }
 
   if (options.includeCastAndLore) {

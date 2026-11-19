@@ -131,6 +131,16 @@
           "description": "Opening premise prompt.",
           "maxLength": 4000
         },
+        "prefixNote": {
+          "type": "string",
+          "description": "Optional beginning author note displayed before the story.",
+          "maxLength": 4000
+        },
+        "suffixNote": {
+          "type": "string",
+          "description": "Optional ending author note displayed after the story.",
+          "maxLength": 4000
+        },
         "protagonistId": {
           "type": "string",
           "description": "Character ID of the protagonist.",
@@ -295,6 +305,16 @@
           "description": "Optional chapter summary or note.",
           "maxLength": 1000
         },
+        "prefixNote": {
+          "type": "string",
+          "description": "Optional beginning author note displayed before the shared work.",
+          "maxLength": 4000
+        },
+        "suffixNote": {
+          "type": "string",
+          "description": "Optional ending author note displayed after the shared work.",
+          "maxLength": 4000
+        },
         "turns": {
           "type": "array",
           "description": "Ordered turns included in the shared snapshot."
@@ -395,6 +415,16 @@
         "premise": {
           "type": "string",
           "description": "Opening premise.",
+          "maxLength": 4000
+        },
+        "prefixNote": {
+          "type": "string",
+          "description": "Optional beginning author note displayed before the story.",
+          "maxLength": 4000
+        },
+        "suffixNote": {
+          "type": "string",
+          "description": "Optional ending author note displayed after the story.",
           "maxLength": 4000
         },
         "protagonistId": {
@@ -551,6 +581,16 @@
         },
         "premise": {
           "type": "string",
+          "maxLength": 4000
+        },
+        "prefixNote": {
+          "type": "string",
+          "description": "Optional beginning author note displayed before the story.",
+          "maxLength": 4000
+        },
+        "suffixNote": {
+          "type": "string",
+          "description": "Optional ending author note displayed after the story.",
           "maxLength": 4000
         },
         "isPrivate": {

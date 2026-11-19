@@ -21,22 +21,31 @@ describe('storyLinks utilities', () => {
     );
   });
 
-  it('parses shareId and collabId from query strings reliably', () => {
+  it('parses shareId, collabId, and storyId from query strings reliably', () => {
     expect(parseRouteLinks('?share=s123')).toEqual({
       shareId: 's123',
       collabId: null,
+      storyId: null,
     });
     expect(parseRouteLinks('collab=c456')).toEqual({
       shareId: null,
       collabId: 'c456',
+      storyId: null,
+    });
+    expect(parseRouteLinks('?story=pub-hp-1')).toEqual({
+      shareId: null,
+      collabId: null,
+      storyId: 'pub-hp-1',
     });
     expect(parseRouteLinks('?share=  &collab=room-9')).toEqual({
       shareId: null,
       collabId: 'room-9',
+      storyId: null,
     });
     expect(parseRouteLinks('')).toEqual({
       shareId: null,
       collabId: null,
+      storyId: null,
     });
   });
 });

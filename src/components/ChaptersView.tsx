@@ -22,6 +22,7 @@ import {
   Volume2,
   X,
 } from 'lucide-react';
+import { useModalScrollLock } from '../hooks/useModalScrollLock';
 import { NarrativeSpeechControls } from '../hooks/useNarrativeSpeech';
 import {
   ModelConfig,
@@ -36,6 +37,7 @@ import {
   downloadStoryHtml,
 } from '../utils/htmlExport';
 import { downloadChapterPdf, downloadStoryPdf } from '../utils/pdfExport';
+import { AuthorNoteBlock } from './AuthorNoteBlock';
 import { IllustrationFigure } from './IllustrationFigure';
 import { IllustrationModal, IllustrationTarget } from './IllustrationModal';
 import { ItemLoreModal, LoreTarget } from './ItemLoreModal';
@@ -109,6 +111,8 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
   const [selectedTurnIds, setSelectedTurnIds] = useState<string[]>([]);
   const [newChapterTitle, setNewChapterTitle] = useState('');
   const [newChapterSummary, setNewChapterSummary] = useState('');
+  const [newChapterPrefixNote, setNewChapterPrefixNote] = useState('');
+  const [newChapterSuffixNote, setNewChapterSuffixNote] = useState('');
   const [targetExistingChapterId, setTargetExistingChapterId] = useState('');
 
   // Per-chapter display mode ('merged' seamless prose vs 'blurbs' with prompts)
@@ -124,6 +128,8 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
   const [illustrationTarget, setIllustrationTarget] =
     useState<IllustrationTarget | null>(null);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+  useModalScrollLock(Boolean(editingChapter));
 
   const handlePersist = async (scopeLabel?: string) => {
     if (isPersisting) return;
@@ -179,6 +185,12 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
       chapterNumber: chapters.length + 1,
       title: newChapterTitle.trim() || defaultTitle,
       summary: newChapterSummary.trim(),
+      prefixNote: newChapterPrefixNote.trim()
+        ? newChapterPrefixNote.trim().slice(0, 4000)
+        : undefined,
+      suffixNote: newChapterSuffixNote.trim()
+        ? newChapterSuffixNote.trim().slice(0, 4000)
+        : undefined,
       turnIds: orderedIds,
       mergedAt: Date.now(),
     };
@@ -187,6 +199,8 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
     setSelectedTurnIds([]);
     setNewChapterTitle('');
     setNewChapterSummary('');
+    setNewChapterPrefixNote('');
+    setNewChapterSuffixNote('');
   };
 
   const handleAddSelectedToExisting = () => {
@@ -223,6 +237,12 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
     const merged: StoryChapter = {
       ...current,
       summary: [current.summary, next.summary].filter(Boolean).join(' '),
+      prefixNote:
+        [current.prefixNote, next.prefixNote].filter(Boolean).join('\n\n') ||
+        undefined,
+      suffixNote:
+        [current.suffixNote, next.suffixNote].filter(Boolean).join('\n\n') ||
+        undefined,
       turnIds: [...current.turnIds, ...next.turnIds],
       mergedAt: Date.now(),
     };
@@ -267,7 +287,17 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
     onUpdateChapters(
       chapters.map((c) =>
         c.id === editingChapter.id
-          ? { ...c, title: editingChapter.title.trim(), summary: editingChapter.summary.trim() }
+          ? {
+              ...c,
+              title: editingChapter.title.trim(),
+              summary: editingChapter.summary.trim(),
+              prefixNote: editingChapter.prefixNote?.trim()
+                ? editingChapter.prefixNote.trim().slice(0, 4000)
+                : undefined,
+              suffixNote: editingChapter.suffixNote?.trim()
+                ? editingChapter.suffixNote.trim().slice(0, 4000)
+                : undefined,
+            }
           : c,
       ),
     );
@@ -408,6 +438,22 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
                   onChange={(e) => setNewChapterSummary(e.target.value)}
                   placeholder="Optional chapter summary or epigraph"
                   className="w-full px-3 py-2 text-xs border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+                />
+                <textarea
+                  rows={2}
+                  maxLength={4000}
+                  value={newChapterPrefixNote}
+                  onChange={(e) => setNewChapterPrefixNote(e.target.value)}
+                  placeholder="Optional beginning author's note (prefix)"
+                  className="w-full px-3 py-2 text-xs border border-neutral-300 rounded-lg resize-y focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+                />
+                <textarea
+                  rows={2}
+                  maxLength={4000}
+                  value={newChapterSuffixNote}
+                  onChange={(e) => setNewChapterSuffixNote(e.target.value)}
+                  placeholder="Optional ending author's note (suffix)"
+                  className="w-full px-3 py-2 text-xs border border-neutral-300 rounded-lg resize-y focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
                 />
                 <button
                   type="submit"
@@ -767,6 +813,17 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
                     </div>
                   </div>
 
+                  {/* Chapter Beginning Author's Note */}
+                  {chapter.prefixNote && (
+                    <AuthorNoteBlock
+                      variant="prefix"
+                      scope="chapter"
+                      note={chapter.prefixNote}
+                      compact
+                      onEdit={() => setEditingChapter({ ...chapter })}
+                    />
+                  )}
+
                   {/* Chapter Content */}
                   {viewMode === 'merged' ? (
                     <div className="space-y-4 max-w-[68ch] text-[15.5px] leading-[1.75] text-[#111827]">
@@ -786,9 +843,25 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
                               />
                             </div>
                           )}
+                          {turn.prefixNote && (
+                            <AuthorNoteBlock
+                              variant="prefix"
+                              scope="scene"
+                              note={turn.prefixNote}
+                              compact
+                            />
+                          )}
                           {turn.prose.map((p, pIdx) => (
                             <p key={pIdx}>{p}</p>
                           ))}
+                          {turn.suffixNote && (
+                            <AuthorNoteBlock
+                              variant="suffix"
+                              scope="scene"
+                              note={turn.suffixNote}
+                              compact
+                            />
+                          )}
                         </React.Fragment>
                       ))}
                     </div>
@@ -908,14 +981,51 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
                                   }
                                 />
                               )}
+                              {turn.prefixNote && (
+                                <AuthorNoteBlock
+                                  variant="prefix"
+                                  scope="scene"
+                                  note={turn.prefixNote}
+                                  compact
+                                  onEdit={
+                                    onCorrectTurn
+                                      ? () => setEditingTurnId(turn.id)
+                                      : undefined
+                                  }
+                                />
+                              )}
                               <p className="text-sm text-[#374151] leading-relaxed whitespace-pre-wrap">
                                 {turn.prose.join('\n\n')}
                               </p>
+                              {turn.suffixNote && (
+                                <AuthorNoteBlock
+                                  variant="suffix"
+                                  scope="scene"
+                                  note={turn.suffixNote}
+                                  compact
+                                  onEdit={
+                                    onCorrectTurn
+                                      ? () => setEditingTurnId(turn.id)
+                                      : undefined
+                                  }
+                                />
+                              )}
                             </>
                           )}
                         </div>
                       ))}
                     </div>
+                  )}
+
+                  {/* Chapter Ending Author's Note */}
+                  {chapter.suffixNote && (
+                    <AuthorNoteBlock
+                      variant="suffix"
+                      scope="chapter"
+                      note={chapter.suffixNote}
+                      compact
+                      onEdit={() => setEditingChapter({ ...chapter })}
+                    />
                   )}
                 </article>
               );
@@ -1033,13 +1143,13 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
       {/* Edit Chapter Metadata Modal */}
       {editingChapter && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 overflow-hidden overscroll-contain"
           role="dialog"
           aria-modal="true"
           aria-labelledby="edit-chapter-heading"
         >
-          <div className="w-full max-w-md bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between">
+          <div className="w-full max-w-md bg-white border border-neutral-200 rounded-xl shadow-xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between shrink-0">
               <h2
                 id="edit-chapter-heading"
                 className="font-editorial text-xl font-semibold text-[#111827]"
@@ -1054,7 +1164,7 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleSaveChapterEdit} className="p-6 space-y-4">
+            <form onSubmit={handleSaveChapterEdit} className="p-6 space-y-4 overflow-y-auto overscroll-contain flex-1 min-h-0">
               <div>
                 <label className="block text-xs font-medium text-[#111827] mb-1">
                   Chapter Title
@@ -1074,11 +1184,49 @@ export const ChaptersView: React.FC<ChaptersViewProps> = ({
                   Chapter Summary / Epigraph
                 </label>
                 <textarea
-                  rows={3}
+                  rows={2}
                   value={editingChapter.summary}
                   onChange={(e) =>
                     setEditingChapter({ ...editingChapter, summary: e.target.value })
                   }
+                  className="w-full px-3.5 py-2 text-sm border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="edit-chapter-prefix-note"
+                  className="block text-xs font-medium text-[#111827] mb-1"
+                >
+                  Beginning Author&apos;s Note (Prefix, optional)
+                </label>
+                <textarea
+                  id="edit-chapter-prefix-note"
+                  rows={2}
+                  maxLength={4000}
+                  value={editingChapter.prefixNote ?? ''}
+                  onChange={(e) =>
+                    setEditingChapter({ ...editingChapter, prefixNote: e.target.value })
+                  }
+                  placeholder="Optional note shown at the beginning of this chapter..."
+                  className="w-full px-3.5 py-2 text-sm border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="edit-chapter-suffix-note"
+                  className="block text-xs font-medium text-[#111827] mb-1"
+                >
+                  Ending Author&apos;s Note (Suffix, optional)
+                </label>
+                <textarea
+                  id="edit-chapter-suffix-note"
+                  rows={2}
+                  maxLength={4000}
+                  value={editingChapter.suffixNote ?? ''}
+                  onChange={(e) =>
+                    setEditingChapter({ ...editingChapter, suffixNote: e.target.value })
+                  }
+                  placeholder="Optional note shown at the end of this chapter..."
                   className="w-full px-3.5 py-2 text-sm border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
                 />
               </div>
