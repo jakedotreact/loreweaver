@@ -136,31 +136,35 @@ describe('server Express API integration', () => {
     expect(modelsRes.status).toBe(200);
   });
 
-  it('rejects unauthenticated, tampered, or expired Firebase ID tokens on all protected /api/story/* routes', async () => {
-    const protectedEndpoints: Array<{ path: string; body: unknown }> = [
-      { path: '/api/story/deduce-universe', body: { universe: 'A', setting: 'B', premise: 'C' } },
-      { path: '/api/story/deduce-character', body: { universe: 'A', name: 'Vera' } },
-      { path: '/api/story/advance', body: { snapshot: {}, userAction: 'Go' } },
-      { path: '/api/story/audit', body: { snapshot: {} } },
-      { path: '/api/story/rewrite-scene', body: { snapshot: {}, targetTurnId: 't1' } },
-      { path: '/api/story/tts', body: { text: 'Hello world.' } },
-      { path: '/api/story/transcribe', body: { audioBase64: 'AAAA' } },
-      { path: '/api/story/illustration-prompt', body: { snapshot: {}, targetKind: 'scene', turnId: 't1' } },
-      { path: '/api/story/import-file', body: { filename: 'a.txt', contentBase64: 'SGVsbG8=' } },
-      { path: '/api/story/import-url', body: { url: 'https://example.com/story.md' } },
-    ];
+  it('allows anonymous authors on /api/story/* routes while still rejecting invalid or expired Bearer tokens', async () => {
+    const anonDeduce = await fetch(`${baseUrl}/api/story/deduce-universe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Anonymous Chronicle',
+        universe: 'Original Fantasy',
+        setting: 'Cloudspire',
+        premise: 'An unnamed chronicler lights the beacon.',
+      }),
+    });
+    expect(anonDeduce.status).toBe(200);
+    const anonPayload = (await anonDeduce.json()) as { snapshot: { title: string } };
+    expect(anonPayload.snapshot.title).toBe('Anonymous Chronicle');
 
-    for (const ep of protectedEndpoints) {
-      const noAuth = await fetch(`${baseUrl}${ep.path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(ep.body),
-      });
-      expect(noAuth.status, `missing auth on ${ep.path}`).toBe(401);
-      const noAuthJson = (await noAuth.json()) as { code?: string; requestId?: string };
-      expect(noAuthJson.code).toBe('unauthorized');
-      expect(noAuthJson.requestId).toBeTruthy();
-    }
+    const mdBase64 = Buffer.from(
+      '# Guest Draft\n\n## Chapter 1\n\nFog rolled over the quay.',
+      'utf8',
+    ).toString('base64');
+    const anonImport = await fetch(`${baseUrl}/api/story/import-file`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filename: 'guest-draft.md',
+        contentBase64: mdBase64,
+        enrichWithAi: false,
+      }),
+    });
+    expect(anonImport.status).toBe(200);
 
     const expiredToken = mintTestFirebaseIdToken({
       uid: 'user-author-1',
@@ -188,7 +192,7 @@ describe('server Express API integration', () => {
     expect(badTokenRes.status).toBe(401);
   });
 
-  it('validates route schemas, field bounds, voices, and oversized payloads for authenticated callers', async () => {
+  it('validates route schemas, field bounds, voices, and oversized payloads cleanly', async () => {
     const authHeaders = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${validToken}`,
@@ -196,7 +200,7 @@ describe('server Express API integration', () => {
 
     const deduceMissing = await fetch(`${baseUrl}/api/story/deduce-universe`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ universe: 'Clockwork' }),
     });
     expect(deduceMissing.status).toBe(400);
@@ -240,10 +244,9 @@ describe('server Express API integration', () => {
     expect(deduceOk.status).toBe(200);
   });
 
-  it('imports .md and .docx files when authenticated and rejects bad formats or SSRF URLs', async () => {
+  it('imports .md and .docx files without requiring login and rejects bad formats or SSRF URLs', async () => {
     const authHeaders = {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${validToken}`,
     };
     const mdBase64 = Buffer.from(
       '# Iron Lantern\n\n## Chapter 1: Arrival\n\nRain hammered the iron roof.',
@@ -470,5 +473,43 @@ describe('server Express API integration', () => {
     expect(data.error).toMatch(/not found/i);
     expect(data.code).toBe('not_found');
     expect(data.requestId).toBeTruthy();
+  });
+
+  it('sets Retry-After, emits TTS quota guidance, and logs 429 throttling at warn level on /api/story/tts', async () => {
+    const logs: Array<Record<string, unknown>> = [];
+    const { UpstreamQuotaError } = await import('../../server/storyAgent');
+
+    const app = createApiApp({
+      logger: (entry) => logs.push(entry),
+      handlers: {
+        synthesizeNarrativeSpeech: async () => {
+          throw new UpstreamQuotaError('RESOURCE_EXHAUSTED 429', 75);
+        },
+      },
+    });
+
+    const temp = await startTempServer(app);
+    try {
+      const res = await fetch(`${temp.baseUrl}/api/story/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: 'The silver pendulum swung twice before midnight.',
+          voiceName: 'Charon',
+        }),
+      });
+
+      expect(res.status).toBe(429);
+      expect(res.headers.get('retry-after')).toBe('75');
+      const json = (await res.json()) as { error: string; code: string; requestId: string };
+      expect(json.code).toBe('upstream_rate_limited');
+      expect(json.error).toMatch(/Text-to-Speech/i);
+      expect(json.requestId).toBeTruthy();
+      expect(logs).toHaveLength(1);
+      expect(logs[0].level).toBe('warn');
+      expect(logs[0].stack).toBeUndefined();
+    } finally {
+      await temp.close();
+    }
   });
 });

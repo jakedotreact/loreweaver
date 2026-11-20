@@ -1,6 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { TtsVoiceName } from '../types/story';
-import { postJson } from '../utils/api';
+import { ApiError, postJson } from '../utils/api';
+
+const DEFAULT_QUOTA_COOLDOWN_MS = 60_000;
+const MAX_QUOTA_COOLDOWN_MS = 5 * 60_000;
+
+function getRateLimitCooldownMs(err: unknown): number | null {
+  if (err instanceof ApiError && err.status === 429) {
+    const retryMs =
+      typeof err.retryAfterSeconds === 'number' && err.retryAfterSeconds > 0
+        ? err.retryAfterSeconds * 1000
+        : DEFAULT_QUOTA_COOLDOWN_MS;
+    return Math.min(Math.max(retryMs, 5_000), MAX_QUOTA_COOLDOWN_MS);
+  }
+  const obj = err as { status?: unknown; code?: unknown; message?: unknown } | null;
+  if (
+    obj &&
+    (obj.status === 429 ||
+      obj.code === 'upstream_rate_limited' ||
+      obj.code === 'rate_limited')
+  ) {
+    return DEFAULT_QUOTA_COOLDOWN_MS;
+  }
+  const msg = err instanceof Error ? err.message : '';
+  if (/\b429\b|quota|rate limit/i.test(msg)) {
+    return DEFAULT_QUOTA_COOLDOWN_MS;
+  }
+  return null;
+}
 
 export interface TtsSpeechItem {
   key: string;
@@ -108,6 +135,7 @@ export function useNarrativeSpeech(
   const workerGenerationRef = useRef(0);
   const playbackAbortRef = useRef<AbortController | null>(null);
   const playbackRequestIdRef = useRef(0);
+  const quotaCooldownUntilRef = useRef<number>(0);
 
   const activeKeyRef = useRef<string | null>(activeKey);
   activeKeyRef.current = activeKey;
@@ -217,8 +245,20 @@ export function useNarrativeSpeech(
           }
           cacheRef.current.set(cacheKey, url);
           failedKeysRef.current.delete(cacheKey);
+          quotaCooldownUntilRef.current = 0;
           setCacheVersion((v) => v + 1);
           return url;
+        } catch (err) {
+          const cooldownMs = getRateLimitCooldownMs(err);
+          if (cooldownMs !== null) {
+            quotaCooldownUntilRef.current = Math.max(
+              quotaCooldownUntilRef.current,
+              Date.now() + cooldownMs,
+            );
+            pendingQueueRef.current = [];
+            workerGenerationRef.current += 1;
+          }
+          throw err;
         } finally {
           inFlightRef.current.delete(cacheKey);
         }
@@ -354,6 +394,11 @@ export function useNarrativeSpeech(
         pendingQueueRef.current.length > 0 &&
         workerGenerationRef.current === generation
       ) {
+        if (!autoPlayRef.current || Date.now() < quotaCooldownUntilRef.current) {
+          pendingQueueRef.current = [];
+          break;
+        }
+
         const nextItem = pendingQueueRef.current.shift();
         if (!nextItem || !nextItem.text.trim()) continue;
 
@@ -369,10 +414,13 @@ export function useNarrativeSpeech(
         setPrecomputingKey(nextItem.key);
         try {
           await synthesizeAndCache(nextItem, targetVoice);
-        } catch {
-          // Background pre-compute failures are silent so they never disrupt reading;
-          // user clicking Listen clears failedKeysRef and surfaces an explicit error if retry fails.
+        } catch (err) {
           failedKeysRef.current.add(cacheKey);
+          // Halt background work immediately if rate/quota limited to avoid hammering /api/story/tts
+          if (getRateLimitCooldownMs(err) !== null) {
+            pendingQueueRef.current = [];
+            break;
+          }
         } finally {
           setPrecomputingKey((curr) =>
             curr === nextItem.key ? null : curr,
@@ -384,7 +432,9 @@ export function useNarrativeSpeech(
       setPrecomputingKey(null);
       if (
         pendingQueueRef.current.length > 0 &&
-        workerGenerationRef.current === generation
+        workerGenerationRef.current === generation &&
+        autoPlayRef.current &&
+        Date.now() >= quotaCooldownUntilRef.current
       ) {
         void runBackgroundWorker();
       }
@@ -393,11 +443,17 @@ export function useNarrativeSpeech(
 
   const precomputeItems = useCallback(
     (items: TtsSpeechItem[]) => {
+      if (!autoPlayRef.current || Date.now() < quotaCooldownUntilRef.current) {
+        pendingQueueRef.current = [];
+        return;
+      }
+
       const targetVoice = voiceRef.current;
       const seenKeys = new Set<string>();
       const nextQueue: TtsSpeechItem[] = [];
 
-      for (const item of items) {
+      // Cap automatic precomputation to the priority item so long stories don't burn TTS quota
+      for (const item of items.slice(0, 1)) {
         if (!item.text.trim()) continue;
         const cacheKey = makeCacheKey(item, targetVoice);
         if (seenKeys.has(cacheKey)) continue;
@@ -421,34 +477,18 @@ export function useNarrativeSpeech(
   const precomputeAndMaybePlay = useCallback(
     async (item: TtsSpeechItem) => {
       if (!item.text.trim()) return;
+      if (!autoPlayRef.current || Date.now() < quotaCooldownUntilRef.current) {
+        return;
+      }
       const targetVoice = voiceRef.current;
       const cacheKey = makeCacheKey(item, targetVoice);
       failedKeysRef.current.delete(cacheKey);
 
-      if (autoPlayRef.current) {
-        await playWithVoice(item, targetVoice, {
-          allowAutoplayGraceful: true,
-        });
-        return;
-      }
-
-      // Always pre-compute narration in the background even when auto-play is disabled
-      setPrecomputingKey(item.key);
-      try {
-        await synthesizeAndCache(item, targetVoice);
-        // If user enabled auto-play while this scene was synthesizing, start playback on success
-        if (autoPlayRef.current) {
-          await playWithVoice(item, targetVoice, {
-            allowAutoplayGraceful: true,
-          });
-        }
-      } catch {
-        failedKeysRef.current.add(cacheKey);
-      } finally {
-        setPrecomputingKey((curr) => (curr === item.key ? null : curr));
-      }
+      await playWithVoice(item, targetVoice, {
+        allowAutoplayGraceful: true,
+      });
     },
-    [playWithVoice, synthesizeAndCache],
+    [playWithVoice],
   );
 
   const togglePlay = useCallback(
@@ -512,12 +552,20 @@ export function useNarrativeSpeech(
 
   const setAutoPlayOnReady = useCallback((enabled: boolean) => {
     autoPlayRef.current = enabled;
+    if (!enabled) {
+      pendingQueueRef.current = [];
+      workerGenerationRef.current += 1;
+    }
     setAutoPlayOnReadyState(enabled);
     handlersRef.current.onAutoPlayPersist?.(enabled);
   }, []);
 
   const hydrateAutoPlayOnReady = useCallback((enabled: boolean) => {
     autoPlayRef.current = enabled;
+    if (!enabled) {
+      pendingQueueRef.current = [];
+      workerGenerationRef.current += 1;
+    }
     setAutoPlayOnReadyState(enabled);
   }, []);
 

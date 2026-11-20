@@ -166,8 +166,9 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
   ) => {
     const rawMsg = err instanceof Error ? err.message : String(err || 'Unknown error');
     const rawStack = err instanceof Error ? err.stack : undefined;
+    const isRateLimited = status === 429;
     logger({
-      level: 'error',
+      level: isRateLimited ? 'warn' : 'error',
       timestamp: new Date().toISOString(),
       requestId: getRequestId(req),
       method: req.method,
@@ -175,20 +176,20 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
       uid: (req as RequestWithSecurity).authUser?.uid ?? null,
       status,
       code,
-      message: redactSensitiveText(rawMsg),
-      ...(rawStack ? { stack: redactSensitiveText(rawStack).slice(0, 1500) } : {}),
+      message: redactSensitiveText(
+        isRateLimited ? rawMsg.slice(0, 300) : rawMsg,
+      ),
+      ...(!isRateLimited && rawStack
+        ? { stack: redactSensitiveText(rawStack).slice(0, 1500) }
+        : {}),
     });
   };
 
-  const requireAuth: express.RequestHandler = async (req, res, next) => {
+  const optionalAuth: express.RequestHandler = async (req, res, next) => {
     const requestId = getRequestId(req);
     const token = extractBearerToken(req.headers.authorization);
     if (!token) {
-      return res.status(401).json({
-        error: 'Authentication is required to use story AI and import endpoints.',
-        code: 'unauthorized',
-        requestId,
-      });
+      return next();
     }
 
     try {
@@ -251,7 +252,7 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
     fn: () => Promise<unknown>,
   ) => {
     const requestId = getRequestId(req);
-    const uid = (req as RequestWithSecurity).authUser?.uid ?? getClientIp(req);
+    const uid = (req as RequestWithSecurity).authUser?.uid ?? `anon:${getClientIp(req)}`;
     const release = concurrencyLimiter.tryAcquire(`uid:${uid}`);
     if (!release) {
       res.setHeader('Retry-After', '2');
@@ -289,7 +290,7 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
 
   app.post(
     '/api/story/deduce-universe',
-    requireAuth,
+    optionalAuth,
     applyRateLimits(false),
     jsonSmall,
     async (req, res) => {
@@ -332,7 +333,7 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
 
   app.post(
     '/api/story/deduce-character',
-    requireAuth,
+    optionalAuth,
     applyRateLimits(false),
     jsonSnapshot,
     async (req, res) => {
@@ -379,7 +380,7 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
 
   app.post(
     '/api/story/advance',
-    requireAuth,
+    optionalAuth,
     applyRateLimits(false),
     jsonSnapshot,
     async (req, res) => {
@@ -417,7 +418,7 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
 
   app.post(
     '/api/story/audit',
-    requireAuth,
+    optionalAuth,
     applyRateLimits(false),
     jsonSnapshot,
     async (req, res) => {
@@ -453,7 +454,7 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
 
   app.post(
     '/api/story/rewrite-scene',
-    requireAuth,
+    optionalAuth,
     applyRateLimits(false),
     jsonSnapshot,
     async (req, res) => {
@@ -495,7 +496,7 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
 
   app.post(
     '/api/story/tts',
-    requireAuth,
+    optionalAuth,
     applyRateLimits(true),
     jsonSmall,
     async (req, res) => {
@@ -519,9 +520,21 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
           return res.json(audio);
         } catch (err) {
           const { status, code } = classifyAiError(err);
+          if (status === 429) {
+            const retrySec = (err as { retryAfterSeconds?: unknown })
+              ?.retryAfterSeconds;
+            res.setHeader(
+              'Retry-After',
+              String(
+                typeof retrySec === 'number' && Number.isFinite(retrySec) && retrySec > 0
+                  ? Math.ceil(retrySec)
+                  : 60,
+              ),
+            );
+          }
           logServerError(req, status, code, err);
           return res.status(status).json({
-            error: formatGeminiError(err, 'Failed to synthesize speech audio.'),
+            error: formatGeminiError(err, 'Failed to synthesize speech audio.', 'tts'),
             code,
             requestId,
           });
@@ -532,7 +545,7 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
 
   app.post(
     '/api/story/transcribe',
-    requireAuth,
+    optionalAuth,
     applyRateLimits(true),
     jsonBinary,
     async (req, res) => {
@@ -569,7 +582,7 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
 
   app.post(
     '/api/story/illustration-prompt',
-    requireAuth,
+    optionalAuth,
     applyRateLimits(false),
     jsonSnapshot,
     async (req, res) => {
@@ -611,7 +624,7 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
 
   app.post(
     '/api/story/import-file',
-    requireAuth,
+    optionalAuth,
     applyRateLimits(true),
     jsonBinary,
     async (req, res) => {
@@ -668,7 +681,7 @@ export function createApiApp(options: ApiAppOptions = {}): express.Express {
 
   app.post(
     '/api/story/import-url',
-    requireAuth,
+    optionalAuth,
     applyRateLimits(true),
     jsonSmall,
     async (req, res) => {

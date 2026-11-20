@@ -751,16 +751,6 @@ export default function App() {
     }
   }, [modelConfig]);
 
-  // Always pre-compute narration in the background (prioritizing the latest scene first)
-  useEffect(() => {
-    if (!project || project.turns.length === 0) return;
-    const orderedItems = [...project.turns]
-      .reverse()
-      .map((t) => buildTurnSpeechItem(t, project.tone));
-    speech.precomputeItems(orderedItems);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id, project.turns, project.tone, speech.voice, speech.precomputeItems]);
-
   const customUsernameValue = (
     userSettings?.username ||
     communityState.username ||

@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import type {
   CharacterProfile,
@@ -235,12 +236,33 @@ export async function listAvailableModels(): Promise<{
   }
 }
 
-export function formatGeminiError(err: unknown, fallback: string): string {
+export class UpstreamQuotaError extends Error {
+  status: number;
+  code: string;
+  retryAfterSeconds: number;
+
+  constructor(message: string, retryAfterSeconds = 60) {
+    super(message);
+    this.name = 'UpstreamQuotaError';
+    this.status = 429;
+    this.code = 'upstream_rate_limited';
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+export function formatGeminiError(
+  err: unknown,
+  fallback: string,
+  context: 'narrative' | 'tts' | 'transcribe' = 'narrative',
+): string {
   const raw = err instanceof Error ? err.message : String(err || '');
   if (/API_KEY_INVALID|PERMISSION_DENIED|403|401/i.test(raw)) {
     return 'Gemini API key is missing or unauthorized. Check your GEMINI_API_KEY in Settings > Secrets.';
   }
   if (/RESOURCE_EXHAUSTED|429/i.test(raw)) {
+    if (context === 'tts') {
+      return 'Text-to-Speech rate or daily quota limit reached (429). Free-tier TTS allows a limited number of requests per day — please wait before retrying or check billing in Settings > Secrets.';
+    }
     return 'Gemini API rate or quota limit reached (429). Retry shortly, switch to Gemini 3.1 Flash Lite, or check billing in Settings > Secrets.';
   }
   if (/NOT_FOUND|404/i.test(raw)) {
@@ -1879,6 +1901,90 @@ export interface SynthesizeSpeechInput {
   voiceName?: string;
 }
 
+interface TtsCacheEntry {
+  audioBase64: string;
+  mimeType: 'audio/wav';
+  cachedAt: number;
+}
+
+const TTS_CACHE_MAX_ENTRIES = 24;
+const TTS_CACHE_TTL_MS = 30 * 60 * 1000;
+const TTS_COOLDOWN_DEFAULT_SEC = 60;
+const TTS_COOLDOWN_MAX_SEC = 120;
+
+const ttsAudioCache = new Map<string, TtsCacheEntry>();
+const ttsInFlight = new Map<
+  string,
+  Promise<{ audioBase64: string; mimeType: 'audio/wav' }>
+>();
+const ttsQuotaCooldownUntil = new Map<string, number>();
+
+export function resetTtsCachesForTests(): void {
+  ttsAudioCache.clear();
+  ttsInFlight.clear();
+  ttsQuotaCooldownUntil.clear();
+}
+
+function getTtsKeyFingerprint(): string {
+  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
+  if (!apiKey) return 'no-key';
+  return crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 12);
+}
+
+function parseRetryDelaySecondsFromError(err: unknown): number {
+  const raw = err instanceof Error ? err.message : String(err || '');
+  const hmsMatch = raw.match(
+    /Please retry in\s+(?:(\d+)h)?(?:(\d+)m)?([\d.]+)s/i,
+  );
+  if (hmsMatch) {
+    const h = Number(hmsMatch[1] || 0);
+    const m = Number(hmsMatch[2] || 0);
+    const s = Math.ceil(Number(hmsMatch[3] || 0));
+    const total = h * 3600 + m * 60 + s;
+    if (Number.isFinite(total) && total > 0) {
+      return Math.min(Math.max(total, 15), TTS_COOLDOWN_MAX_SEC);
+    }
+  }
+  return TTS_COOLDOWN_DEFAULT_SEC;
+}
+
+function getCachedTts(
+  cacheKey: string,
+): { audioBase64: string; mimeType: 'audio/wav' } | null {
+  const entry = ttsAudioCache.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() - entry.cachedAt > TTS_CACHE_TTL_MS) {
+    ttsAudioCache.delete(cacheKey);
+    return null;
+  }
+  // Refresh LRU order
+  ttsAudioCache.delete(cacheKey);
+  ttsAudioCache.set(cacheKey, entry);
+  return { audioBase64: entry.audioBase64, mimeType: entry.mimeType };
+}
+
+function setCachedTts(
+  cacheKey: string,
+  value: { audioBase64: string; mimeType: 'audio/wav' },
+): void {
+  if (ttsAudioCache.has(cacheKey)) {
+    ttsAudioCache.delete(cacheKey);
+  }
+  ttsAudioCache.set(cacheKey, {
+    audioBase64: value.audioBase64,
+    mimeType: value.mimeType,
+    cachedAt: Date.now(),
+  });
+  while (ttsAudioCache.size > TTS_CACHE_MAX_ENTRIES) {
+    const oldestKey = ttsAudioCache.keys().next().value;
+    if (typeof oldestKey === 'string') {
+      ttsAudioCache.delete(oldestKey);
+    } else {
+      break;
+    }
+  }
+}
+
 export async function synthesizeNarrativeSpeech(
   input: SynthesizeSpeechInput,
 ): Promise<{ audioBase64: string; mimeType: 'audio/wav' }> {
@@ -1891,60 +1997,117 @@ export async function synthesizeNarrativeSpeech(
     ? (input.voiceName as TtsVoiceName)
     : 'Charon';
 
-  const ai = getClient('v1beta');
-  const chunks = splitTextForTts(cleanText, 2200);
-  const styleHint = input.tone
-    ? `Expressive literary audiobook narrator matching tone: ${input.tone}`
-    : 'Warm, expressive literary audiobook narrator with clear pacing';
+  const cacheKey = crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify({
+        text: cleanText,
+        tone: input.tone || '',
+        voice,
+      }),
+    )
+    .digest('hex');
 
-  const wavClips: Buffer[] = [];
-
-  for (const chunkText of chunks) {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash-lite-tts',
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              text: chunkText,
-              speechMetadata: {
-                style: styleHint,
-              },
-            },
-          ],
-        },
-      ],
-      config: {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: voice },
-          },
-        },
-      },
-    });
-
-    let foundAudio: string | undefined;
-    for (const part of response.candidates?.[0]?.content?.parts ?? []) {
-      if (part.inlineData?.data) {
-        foundAudio = part.inlineData.data;
-        break;
-      }
-    }
-
-    if (!foundAudio) {
-      throw new Error('TTS model did not return audio data.');
-    }
-
-    wavClips.push(Buffer.from(foundAudio, 'base64'));
+  const cached = getCachedTts(cacheKey);
+  if (cached) {
+    return cached;
   }
 
-  const finalWav = mergeWavBuffers(wavClips);
-  return {
-    audioBase64: finalWav.toString('base64'),
-    mimeType: 'audio/wav',
-  };
+  const existingInFlight = ttsInFlight.get(cacheKey);
+  if (existingInFlight) {
+    return existingInFlight;
+  }
+
+  const keyFingerprint = getTtsKeyFingerprint();
+  const cooldownUntil = ttsQuotaCooldownUntil.get(keyFingerprint) || 0;
+  const now = Date.now();
+  if (now < cooldownUntil) {
+    const remainingSec = Math.max(1, Math.ceil((cooldownUntil - now) / 1000));
+    throw new UpstreamQuotaError(
+      `TTS upstream quota cooldown active (${remainingSec}s remaining, 429 RESOURCE_EXHAUSTED).`,
+      remainingSec,
+    );
+  }
+
+  const task = (async (): Promise<{ audioBase64: string; mimeType: 'audio/wav' }> => {
+    const ai = getClient('v1beta');
+    const chunks = splitTextForTts(cleanText, 2200);
+    const styleHint = input.tone
+      ? `Expressive literary audiobook narrator matching tone: ${input.tone}`
+      : 'Warm, expressive literary audiobook narrator with clear pacing';
+
+    const wavClips: Buffer[] = [];
+
+    try {
+      for (const chunkText of chunks) {
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash-lite-tts',
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: chunkText,
+                  speechMetadata: {
+                    style: styleHint,
+                  },
+                },
+              ],
+            },
+          ],
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: voice },
+              },
+            },
+          },
+        });
+
+        let foundAudio: string | undefined;
+        for (const part of response.candidates?.[0]?.content?.parts ?? []) {
+          if (part.inlineData?.data) {
+            foundAudio = part.inlineData.data;
+            break;
+          }
+        }
+
+        if (!foundAudio) {
+          throw new Error('TTS model did not return audio data.');
+        }
+
+        wavClips.push(Buffer.from(foundAudio, 'base64'));
+      }
+
+      const finalWav = mergeWavBuffers(wavClips);
+      const result = {
+        audioBase64: finalWav.toString('base64'),
+        mimeType: 'audio/wav' as const,
+      };
+      ttsQuotaCooldownUntil.delete(keyFingerprint);
+      setCachedTts(cacheKey, result);
+      return result;
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err || '');
+      if (/RESOURCE_EXHAUSTED|429/i.test(raw)) {
+        const retryAfterSec = parseRetryDelaySecondsFromError(err);
+        ttsQuotaCooldownUntil.set(
+          keyFingerprint,
+          Date.now() + retryAfterSec * 1000,
+        );
+        throw new UpstreamQuotaError(raw, retryAfterSec);
+      }
+      throw err;
+    }
+  })();
+
+  ttsInFlight.set(cacheKey, task);
+  try {
+    return await task;
+  } finally {
+    ttsInFlight.delete(cacheKey);
+  }
 }
 
 export interface TranscribeAudioInput {

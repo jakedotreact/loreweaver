@@ -1,5 +1,39 @@
 import { auth } from '../firebase';
 
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  retryAfterSeconds?: number;
+
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    retryAfterSeconds?: number,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+function parseRetryAfterSeconds(headerValue: string | null): number | undefined {
+  if (!headerValue) return undefined;
+  const trimmed = headerValue.trim();
+  if (!trimmed) return undefined;
+  if (/^\d+$/.test(trimmed)) {
+    const secs = Number(trimmed);
+    return Number.isFinite(secs) && secs >= 0 ? secs : undefined;
+  }
+  const targetMs = Date.parse(trimmed);
+  if (!Number.isNaN(targetMs)) {
+    return Math.max(0, Math.ceil((targetMs - Date.now()) / 1000));
+  }
+  return undefined;
+}
+
 export async function postJson<T = Record<string, unknown>>(
   url: string,
   body: unknown,
@@ -27,6 +61,7 @@ export async function postJson<T = Record<string, unknown>>(
     body: JSON.stringify(body),
   });
 
+  const retryAfterSeconds = parseRetryAfterSeconds(res.headers.get('retry-after'));
   const rawText = await res.text();
   let data: Record<string, unknown> | null = null;
 
@@ -36,16 +71,22 @@ export async function postJson<T = Record<string, unknown>>(
     } catch {
       const looksLikeHtml = /^\s*</.test(rawText);
       if (res.status === 413) {
-        throw new Error(
+        throw new ApiError(
           'Audio or story payload exceeded the server size limit. Try a shorter clip.',
+          413,
+          'payload_too_large',
+          retryAfterSeconds,
         );
       }
       if (looksLikeHtml || !res.ok) {
-        throw new Error(
+        throw new ApiError(
           `Server returned an unexpected ${res.status || ''} response. Please retry in a moment.`.replace(
             /\s+/g,
             ' ',
           ),
+          res.status || 500,
+          undefined,
+          retryAfterSeconds,
         );
       }
       throw new Error('Server returned an invalid response format.');
@@ -53,15 +94,16 @@ export async function postJson<T = Record<string, unknown>>(
   }
 
   if (!res.ok) {
+    const code = data && typeof data.code === 'string' ? data.code : undefined;
     const errMsg =
       data && typeof data.error === 'string'
         ? data.error
         : res.status === 401
-          ? 'Please sign in with Google to use AI generation and import tools.'
+          ? 'Your session token could not be verified. Retry or sign out to continue as an anonymous author.'
           : res.status === 429
             ? 'Rate limit reached. Please wait a moment before retrying.'
             : `Request failed (${res.status}).`;
-    throw new Error(errMsg);
+    throw new ApiError(errMsg, res.status, code, retryAfterSeconds);
   }
 
   return (data ?? {}) as T;
