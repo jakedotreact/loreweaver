@@ -512,4 +512,79 @@ describe('server Express API integration', () => {
       await temp.close();
     }
   });
+
+  it('accepts multi-paragraph premises over 4000 chars on /api/story/advance and rejects abusive >32000 char premises', async () => {
+    const app = createApiApp({
+      handlers: {
+        advanceNarrative: async (snapshot) => ({
+          nextTurn: {
+            id: 'turn-2',
+            turnNumber: 2,
+            sceneTitle: 'Scene 2',
+            location: 'Harbor',
+            inStoryTime: 'Night',
+            activeCharacters: [],
+            userAction: 'Continue',
+            prose: [`Continued from ${snapshot.premise.length}-char premise.`],
+            continuityNotes: [],
+            continuityWarning: null,
+            selectedChoiceId: null,
+            timestamp: Date.now(),
+            choices: [],
+          },
+          updatedCharacters: snapshot.characters,
+          updatedCrossIndex: snapshot.crossIndex,
+        }),
+      },
+    });
+
+    const temp = await startTempServer(app);
+    try {
+      const richPremise = 'Chronicle detail. '.repeat(350).trim(); // ~6300 chars (> 4000, < 32000)
+      expect(richPremise.length).toBeGreaterThan(4000);
+
+      const okRes = await fetch(`${temp.baseUrl}/api/story/advance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          snapshot: {
+            title: 'Rich Premise Chronicle',
+            universe: 'Original Fiction',
+            setting: 'Cloudspire',
+            tone: 'Literary Fiction',
+            premise: richPremise,
+            protagonistId: 'c1',
+            turns: [{ id: 't1', turnNumber: 1 }],
+            characters: [],
+            crossIndex: [],
+          },
+          userAction: 'Step onto the pier.',
+        }),
+      });
+      expect(okRes.status).toBe(200);
+
+      const tooHugeRes = await fetch(`${temp.baseUrl}/api/story/advance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          snapshot: {
+            title: 'Oversized Premise',
+            universe: 'Original Fiction',
+            setting: 'Cloudspire',
+            tone: 'Literary Fiction',
+            premise: 'a'.repeat(32_500),
+            protagonistId: 'c1',
+            turns: [{ id: 't1', turnNumber: 1 }],
+            characters: [],
+            crossIndex: [],
+          },
+          userAction: 'Step onto the pier.',
+        }),
+      });
+      expect(tooHugeRes.status).toBe(400);
+      expect(((await tooHugeRes.json()) as { error: string }).error).toMatch(/32000/);
+    } finally {
+      await temp.close();
+    }
+  });
 });

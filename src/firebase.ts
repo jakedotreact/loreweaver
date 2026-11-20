@@ -6,7 +6,9 @@ import {
   getDocFromServer,
   getFirestore,
 } from 'firebase/firestore';
-import rawConfig from '../firebase-applet-config.json';
+const optionalConfigModules = import.meta.glob('../firebase-applet-config.json', {
+  eager: true,
+});
 
 interface FirebaseAppletConfig {
   projectId: string;
@@ -19,7 +21,15 @@ interface FirebaseAppletConfig {
   measurementId?: string;
 }
 
-const fileConfig = rawConfig as FirebaseAppletConfig;
+const rawConfigModule = optionalConfigModules['../firebase-applet-config.json'] as
+  | { default?: Partial<FirebaseAppletConfig> }
+  | Partial<FirebaseAppletConfig>
+  | undefined;
+
+const fileConfig: Partial<FirebaseAppletConfig> =
+  rawConfigModule && typeof rawConfigModule === 'object' && 'default' in rawConfigModule
+    ? rawConfigModule.default ?? {}
+    : (rawConfigModule as Partial<FirebaseAppletConfig> | undefined) ?? {};
 
 const resolvedConfig: FirebaseAppletConfig = {
   projectId:

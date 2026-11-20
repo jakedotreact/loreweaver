@@ -618,6 +618,7 @@ export const NewStoryModal: React.FC<NewStoryModalProps> = ({
                 </div>
                 <textarea
                   rows={3}
+                  maxLength={32000}
                   value={premise}
                   onChange={(e) => setPremise(e.target.value)}
                   placeholder="Describe or dictate the inciting situation or conflict..."

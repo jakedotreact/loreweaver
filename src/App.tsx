@@ -231,11 +231,11 @@ function loadInitialLibrary(): { stories: StoryProject[]; activeId: string } {
 
 function extractSnapshot(project: StoryProject): StorySnapshot {
   return {
-    title: project.title,
-    universe: project.universe,
-    setting: project.setting,
-    tone: project.tone,
-    premise: project.premise,
+    title: (project.title || '').trim().slice(0, 200),
+    universe: (project.universe || '').trim().slice(0, 200),
+    setting: (project.setting || '').trim().slice(0, 400),
+    tone: (project.tone || '').trim().slice(0, 200),
+    premise: (project.premise || '').trim().slice(0, 32_000),
     prefixNote: project.prefixNote,
     suffixNote: project.suffixNote,
     protagonistId: project.protagonistId,

@@ -25,6 +25,8 @@ const MODEL_ID_RE = /^[a-z0-9._-]{1,100}$/i;
 const ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
 
 export const MAX_SNAPSHOT_JSON_BYTES = 1_800_000;
+export const MAX_PREMISE_CHARS = 32_000;
+export const MAX_ACTION_CHARS = 12_000;
 export const MAX_TTS_TEXT_CHARS = 20_000;
 export const MAX_AUDIO_BASE64_CHARS = 14_000_000;
 export const MAX_FILE_BASE64_CHARS = 14_500_000;
@@ -124,7 +126,11 @@ export function validateStorySnapshotInput(
   if (!settingCheck.ok) return settingCheck;
   const toneCheck = readOptionalBoundedString(raw.tone, 'snapshot.tone', 200);
   if (!toneCheck.ok) return toneCheck;
-  const premiseCheck = readOptionalBoundedString(raw.premise, 'snapshot.premise', 4000);
+  const premiseCheck = readOptionalBoundedString(
+    raw.premise,
+    'snapshot.premise',
+    MAX_PREMISE_CHARS,
+  );
   if (!premiseCheck.ok) return premiseCheck;
 
   if (!Array.isArray(raw.turns)) {
@@ -158,7 +164,7 @@ export function validateDeduceUniverseBody(raw: unknown) {
   if (!universe.ok) return universe;
   const setting = readRequiredBoundedString(raw.setting, 'Setting', 400);
   if (!setting.ok) return setting;
-  const premise = readRequiredBoundedString(raw.premise, 'Premise', 4000);
+  const premise = readRequiredBoundedString(raw.premise, 'Premise', MAX_PREMISE_CHARS);
   if (!premise.ok) return premise;
   const title = readOptionalBoundedString(raw.title, 'Title', 200);
   if (!title.ok) return title;
@@ -233,7 +239,7 @@ export function validateDeduceCharacterBody(raw: unknown) {
   if (!setting.ok) return setting;
   const tone = readOptionalBoundedString(raw.tone, 'Tone', 200);
   if (!tone.ok) return tone;
-  const premise = readOptionalBoundedString(raw.premise, 'Premise', 4000);
+  const premise = readOptionalBoundedString(raw.premise, 'Premise', MAX_PREMISE_CHARS);
   if (!premise.ok) return premise;
 
   let role: CharacterRole | undefined;
@@ -284,7 +290,11 @@ export function validateAdvanceBody(raw: unknown) {
   }
   const snapshot = validateStorySnapshotInput(raw.snapshot, true);
   if (!snapshot.ok) return snapshot;
-  const userAction = readRequiredBoundedString(raw.userAction, 'User action', 4000);
+  const userAction = readRequiredBoundedString(
+    raw.userAction,
+    'User action',
+    MAX_ACTION_CHARS,
+  );
   if (!userAction.ok) return userAction;
   const selectedChoiceId = readOptionalBoundedString(
     raw.selectedChoiceId,
@@ -338,7 +348,7 @@ export function validateRewriteSceneBody(raw: unknown) {
   const correctionInstruction = readOptionalBoundedString(
     raw.correctionInstruction,
     'correctionInstruction',
-    4000,
+    MAX_ACTION_CHARS,
   );
   if (!correctionInstruction.ok) return correctionInstruction;
   const modelConfig = validateModelConfigInput(raw.modelConfig);
